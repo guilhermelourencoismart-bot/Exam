@@ -2,6 +2,8 @@
 
 Aplicativo pessoal em Next.js e TypeScript, executado no seu computador. Mantém 400 registros do SQLite original, sem banco remoto e sem API paga.
 
+Para baixar pelo GitHub, entre na sua conta, abra [o repositório na versão main](https://github.com/guilhermelourencoismart-bot/Exam/tree/main) e clique em **Code → Download ZIP**. O ZIP inclui o aplicativo e os PDFs; a pasta extraída se chama `Exam-main`.
+
 **240 questões completas estão liberadas com gabarito da versão conferida:** 60 de cada uma das aplicações P2026A, P2026B, P2026C e do simulado ALFRED S2026B. Os 18 PDFs originais recebidos coincidem byte a byte com o inventário, independentemente dos nomes. Os 160 itens restantes têm páginas completas para consulta, mas continuam sem correção automática. Veja os motivos e o pareamento em [docs/FONTES.md](docs/FONTES.md).
 
 As 60 questões P2026C permanecem **reservadas para avaliação** e excluídas por padrão. Há 180 disponíveis sem expor essa reserva, sendo 120 de seleção e 60 de terceiros. O filtro inicial usa seleção e oferece 120. Para incluir a prova reservada, marque explicitamente a opção no treino.
@@ -11,7 +13,7 @@ As 60 questões P2026C permanecem **reservadas para avaliação** e excluídas p
 1. Na versão antiga, clique em **Exportar backup**. Guarde o arquivo `insper-backup.json`.
 2. No terminal antigo, pressione **Ctrl+C**. Feche todas as abas do aplicativo.
 3. Renomeie a pasta antiga `Exam` para `Exam-anterior`. **Não a apague.**
-4. Extraia `Insper-segunda-etapa-com-fontes.zip`; use a nova pasta `Exam`. Node.js **24 LTS** continua sendo o requisito.
+4. Extraia o ZIP baixado. No download do GitHub, renomeie a pasta extraída `Exam-main` para `Exam`; no ZIP entregue diretamente, ela já se chama `Exam`. Node.js **24 LTS** continua sendo o requisito.
 5. Abra um terminal nessa nova pasta. No Windows, abra `Exam` no Explorador, digite `cmd` na barra de endereço e pressione Enter. No macOS, abra o Terminal, digite `cd `, arraste a nova pasta `Exam` para a janela e pressione Enter.
 6. Execute um comando por vez:
 
