@@ -1,4 +1,12 @@
-# Verificação de Provas, Revisão e fontes · 0.4.1
+# Verificação de Provas, Revisão e fontes · 0.4.2
+
+## Diagnósticos OAuth 0.4.2
+
+`npm test`: **76 testes passaram**; `npm run typecheck` passou. Treze testes novos verificam diagnósticos distintos para issuer, audience, expiração, idade máxima de 10 minutos, iat futuro, nbf futuro, tipo de iat, nonce divergente/inválido, assinatura versus seleção/formato do JWKS, campos obrigatórios, ausência de vazamento por propriedades/mensagens arbitrárias e propagação até a página de callback e o estado da conexão. Os testes usam tokens sintéticos assinados com RS256, chaves de teste e respostas oficiais simuladas; o callback HTTP em loopback é real. Nenhum teste usa uma conta pessoal. Credenciais não são salvas após a rejeição.
+
+`npm run build` também passou. Testes de fontes e navegador das versões anteriores não foram repetidos para esta mudança no diagnóstico do servidor.
+
+Assinatura, issuer da descoberta, audience do Client ID emitido, exp, iat, nonce da tentativa, algoritmos permitidos, tolerância de 10 segundos e limite adicional de 10 minutos permanecem ativos. Nenhum valor de claim, token, `kid`, mensagem bruta ou URL de autorização é encaminhado no diagnóstico. Não há confirmação de causa nem de login real corrigido. A próxima tentativa no Windows deve produzir o diagnóstico específico.
 
 ## Correção OAuth 0.4.1
 

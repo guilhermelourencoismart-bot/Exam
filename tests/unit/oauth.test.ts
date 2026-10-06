@@ -1,7 +1,8 @@
 import { afterEach,beforeAll,describe,expect,it,vi } from "vitest";
 import { createHash } from "node:crypto";
-import { SignJWT,generateKeyPair,exportJWK } from "jose";
-import { AUTH,TOKEN,RESOURCE,SCOPES,LocalOAuth,authorizationUrl,verifyIdToken,tokenRequest,type Installation,type InstallationStore } from "../../src/server/ai/oauth";
+import { SignJWT,generateKeyPair,exportJWK,errors as joseErrors } from "jose";
+import { AUTH,TOKEN,RESOURCE,SCOPES,LocalOAuth,authorizationUrl,verifyIdToken,tokenRequest,idTokenDiagnostic,type Installation,type InstallationStore } from "../../src/server/ai/oauth";
+import { ChatGPTPlanProvider } from "../../src/server/ai/provider";
 import type { Credential,Vault } from "../../src/server/ai/vault";
 import { dpapiScript } from "../../src/server/ai/vault";
 import { secureLocalRequest } from "../../src/server/ai/http";
@@ -57,5 +58,66 @@ describe("verificação criptográfica real de tokens sintéticos",()=>{
   expect((await verifyIdToken(await signed(),client,"nonce-test",network())).sub).toBe("person-test");
   for(const changes of [{iss:"https://evil.example"},{aud:"another-app"},{exp:1},{nonce:"wrong"}])await expect(verifyIdToken(await signed(changes),client,"nonce-test",network())).rejects.toThrow();
   const other=await generateKeyPair("RS256"),bad=await new SignJWT({nonce:"nonce-test"}).setSubject("test").setIssuer(issuer).setAudience(client).setIssuedAt().setExpirationTime("1h").setProtectedHeader({alg:"RS256",kid:"test-key"}).sign(other.privateKey);await expect(verifyIdToken(bad,client,"nonce-test",network())).rejects.toThrow("assinatura");
+ });
+ it.each([
+  [{iss:"https://issuer-sensitive.invalid"},"ERR_JWT_CLAIM_VALIDATION_FAILED","issuer.descoberta"],
+  [{aud:"sensitive-wrong-client"},"ERR_JWT_CLAIM_VALIDATION_FAILED","audience.clientId_emitido"],
+  [{exp:1},"ERR_JWT_EXPIRED","exp.relogio"],
+  [{iat:Math.floor(Date.now()/1000)-3600},"ERR_JWT_EXPIRED","iat.maxTokenAge_10m"],
+  [{iat:Math.floor(Date.now()/1000)+3600},"ERR_JWT_CLAIM_VALIDATION_FAILED","iat.relogio"],
+  [{nbf:Math.floor(Date.now()/1000)+3600},"ERR_JWT_CLAIM_VALIDATION_FAILED","nbf.relogio"],
+  [{iat:"sensitive-iat"},"ERR_JWT_CLAIM_VALIDATION_FAILED","iat"],
+  [{nonce:"sensitive-wrong-nonce"},"INSPER_ID_TOKEN_NONCE_MISMATCH","nonce.mesma_tentativa"],
+  [{nonce:123},"INSPER_ID_TOKEN_NONCE_INVALID","nonce.mesma_tentativa"],
+ ])("rejeita a falha %j e retorna código %s e verificação %s sem dados do token",async(overrides,code,check)=>{
+  const token=await signed({...overrides,email:"sensitive-person@example.invalid"});
+  const error=await verifyIdToken(token,client,"nonce-test",network()).catch(e=>e);
+  expect(error.status).toBe(403);expect(error.code).toBe("identity");
+  expect(error.message).toContain(`código=${code}; verificação=${check};`);
+  expect(error.message).not.toMatch(/sensitive|person-test|nonce-test|app_insper_test123|https:\/\//);
+  expect(error.message).not.toContain(token);
+ });
+ it("distingue assinatura inválida de chave não encontrada e JWKS inválido",async()=>{
+  const other=await generateKeyPair("RS256"),wrongJwk={...await exportJWK(other.publicKey),kid:"test-key"};
+  for(const [keys,code,check] of [
+   [{keys:[wrongJwk]},"ERR_JWS_SIGNATURE_VERIFICATION_FAILED","assinatura"],
+   [{keys:[{...publicJwk,kid:"sensitive-unknown-key"}]},"ERR_JWKS_NO_MATCHING_KEY","jwks.selecao_chave"],
+   [{keys:"sensitive-invalid"},"ERR_JWKS_INVALID","jwks.formato"],
+  ] as const){
+   const fetcher=(async(url:any)=>String(url).includes("openid-configuration")?Response.json({issuer,jwks_uri:`${issuer}/keys`}):Response.json(keys)) as typeof fetch;
+   await expect(verifyIdToken(await signed(),client,"nonce-test",fetcher)).rejects.toThrow(`código=${code}; verificação=${check};`);
+  }
+ });
+ it("mantém as exigências de campos obrigatórios e o limite adicional de idade",async()=>{
+  const payload={nonce:"nonce-test",sub:"person-test",iss:issuer,aud:client,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600};
+  for(const claim of ["exp","iat","nonce"]){
+   const missing:Record<string,unknown>={...payload};delete missing[claim];
+   const token=await new SignJWT(missing).setProtectedHeader({alg:"RS256",kid:"test-key"}).sign(privateKey);
+   await expect(verifyIdToken(token,client,"nonce-test",network())).rejects.toThrow("campo_obrigatorio_ausente");
+  }
+  // exp still in the future cannot bypass the independent 10-minute age check.
+  await expect(verifyIdToken(await signed({iat:Math.floor(Date.now()/1000)-700}),client,"nonce-test",network())).rejects.toThrow("idade_maxima_excedida");
+ });
+ it("mostra o diagnóstico no callback e no estado da conexão sem salvar credenciais",async()=>{
+  const token=await signed({aud:"sensitive-wrong-client",email:"sensitive-person@example.invalid"}),vault=new MemoryVault(),installation=new MemoryInstallation();
+  const fetcher=(async(url:any)=>String(url)===TOKEN?Response.json({access_token:"sensitive-access",refresh_token:"sensitive-refresh",id_token:token,token_type:"Bearer",expires_in:3600,scope:SCOPES}):network()(url)) as typeof fetch;
+  const oauth=new LocalOAuth(vault,installation,fetcher);auths.push(oauth);
+  const authUrl=new URL((await oauth.start()).authUrl),callback=new URL(authUrl.searchParams.get("redirect_uri")!);
+  callback.search=new URLSearchParams({code:"sensitive-code",client_id:client,state:authUrl.searchParams.get("state")!}).toString();
+  const response=await fetch(callback),html=await response.text();
+  expect(response.status).toBe(403);expect(html).toContain("ERR_JWT_CLAIM_VALIDATION_FAILED");expect(html).toContain("audience.clientId_emitido");
+  const status=await new ChatGPTPlanProvider(vault,oauth,fetcher).status();expect(status.message).toBe(oauth.message);expect(status.message).toContain("audience.clientId_emitido");
+  for(const value of [token,"sensitive",authUrl.toString(),callback.toString(),authUrl.searchParams.get("nonce")!,authUrl.searchParams.get("state")!]){expect(html).not.toContain(value);expect(status.message).not.toContain(value);}
+  expect(vault.value).toBeNull();expect(installation.value.clientId).toBeNull();expect(oauth.completed).toBe(0);
+ });
+});
+describe("diagnóstico seguro: não encaminha mensagens nem propriedades arbitrárias",()=>{
+ it("usa exclusivamente rótulos fixos mesmo quando o erro contém segredos ou HTML",()=>{
+  const secret="<script>sensitive-token-person-url</script>";
+  const claimError=new joseErrors.JWTClaimValidationFailed(secret,{email:secret},secret,secret);claimError.code=secret;
+  for(const error of [claimError,new Error(secret),new TypeError(secret),new joseErrors.JOSEAlgNotAllowed(secret),new joseErrors.JWKInvalid(secret),new joseErrors.JWKSMultipleMatchingKeys(secret)]){
+   const diagnostic=idTokenDiagnostic(error);expect(diagnostic.code).toBe("identity");expect(diagnostic.message).toContain("Diagnóstico seguro: código=");expect(diagnostic.message).not.toContain(secret);expect(diagnostic.message).not.toMatch(/<|>|sensitive/);
+  }
+  expect(idTokenDiagnostic(claimError).message).toContain("ERR_JWT_CLAIM_VALIDATION_FAILED; verificação=claims");
  });
 });

@@ -1,4 +1,4 @@
-# ChatGPT: implementação local · 0.4.1
+# ChatGPT: implementação local · 0.4.2
 
 A conexão e a geração estão implementadas. **Ainda não há uma chamada autenticada validada com a conta do usuário.** Os testes da OpenAI são simulados; as verificações criptográficas usam tokens sintéticos assinados. O aplicativo só registra geração validada após uma inferência autenticada concluída, revisão aceita, armazenamento da prova e exibição das questões no treino.
 
@@ -37,6 +37,24 @@ A troca do código ocorre somente no servidor por POST form-urlencoded a `https:
 A identidade é conferida com `jose` e chaves JWKS obtidas por HTTPS dos metadados OpenID da OpenAI. Valida assinatura assimétrica, issuer, audience igual ao Client ID emitido, expiração, data de emissão, subject e nonce. Não há decodificação de JWT aceita como validação. As permissões `resource.invoke` e `chatgpt.tokens.use.direct` precisam estar concedidas. Consentimento recusado, identidade inválida, ausência de registro ou scope não geram conexão.
 
 A renovação usa refresh_token com o mesmo Client ID e resource. Se a resposta de refresh omitir scope, conserva somente os scopes confirmados no consentimento anterior, conforme o comportamento padrão de OAuth; nunca amplia permissões. Falha de renovação mostra erro e pede reconexão. O nome do plano não é inferido quando o serviço não o informa.
+
+## Diagnóstico seguro de ID token · 0.4.2
+
+O `catch(error)` de `verifyIdToken` captura a falha real de `jose` e a converte em código, nome da verificação e motivo fixos. A página de retorno do login e a mensagem da conexão em **Provas** exibem o mesmo diagnóstico. Exemplo **ilustrativo, não observado na conta pessoal**:
+
+```text
+Diagnóstico seguro: código=ERR_JWT_CLAIM_VALIDATION_FAILED; verificação=audience.clientId_emitido; motivo=verificacao_rejeitada.
+```
+
+Assinatura e seleção da chave no JWKS são diferenciadas. Os claims `iss`, `aud`, `exp`, `iat`, `nbf` e `nonce` têm verificações identificadas; campos ausentes ou tipos inválidos são distintos de divergência. `iat.maxTokenAge_10m` indica a restrição adicional de idade excedida, mesmo que `exp` ainda esteja no futuro. `iat.relogio` indica emissão no futuro em relação ao relógio usado pela validação. Esses diagnósticos não comprovam por si só que o relógio esteja errado.
+
+O issuer continua exatamente o retornado pelo documento de descoberta validado; audience continua o Client ID emitido; JWKS vem por HTTPS do destino oficial validado; assinatura, algoritmos, expiração, iat, nonce da tentativa, `clockTolerance: 10` e `maxTokenAge: "10m"` permanecem inalterados. Nenhuma validação foi removida ou tolerância ampliada para aceitar o login.
+
+O diagnóstico não incorpora `error.message`, `error.payload`, `error.cause`, headers, `kid`, valores dos claims ou propriedades arbitrárias do erro. Somente classes reconhecidas e rótulos permitidos são convertidos. Não há log do erro bruto. Falhas desconhecidas recebem um código local fixo, sem serializar a exceção.
+
+Para obter o diagnóstico pessoal: atualize para **0.4.2**, encerre o servidor antigo com Ctrl+C, execute `npm ci` e `npm run dev` na nova pasta e abra `http://127.0.0.1:3000` no mesmo navegador/perfil. Feche a janela antiga da OpenAI, clique em **Conectar ChatGPT** e autorize novamente. Se falhar, copie apenas a mensagem que contém **Diagnóstico seguro**, da página de retorno ou de **Provas**. Não envie a URL da janela, tokens, arquivos de credenciais ou conteúdo de `installation.json`. Não é necessário apagar dados para repetir a tentativa.
+
+As verificações foram exercitadas com tokens sintéticos realmente assinados usando a versão instalada de `jose` 6.1.0. A causa da rejeição observada pelo usuário segue desconhecida até essa nova tentativa; não há declaração de login ou geração autenticada corrigidos.
 
 ## Inferência e revisão
 

@@ -1,4 +1,4 @@
-# Meu preparo · Insper 2027.1 · versão 0.4.1
+# Meu preparo · Insper 2027.1 · versão 0.4.2
 
 Aplicativo pessoal em Next.js e TypeScript, executado no seu computador. Mantém 400 registros do SQLite original, sem banco remoto e sem API paga.
 
@@ -9,6 +9,8 @@ Para baixar pelo GitHub, entre na sua conta, abra [o repositório na versão mai
 As 60 questões P2026C permanecem **reservadas para avaliação** e excluídas por padrão. Há 180 disponíveis sem expor essa reserva, sendo 120 de seleção e 60 de terceiros. O filtro inicial usa seleção e oferece 120. Para incluir a prova reservada, marque explicitamente a opção no treino.
 
 ## Substituir a versão anterior sem perder seus dados
+
+**Diagnóstico de login 0.4.2:** se o ID token for rejeitado, a página de retorno do login e o painel **Provas → Conexão ChatGPT** mostram `Diagnóstico seguro: código=...; verificação=...; motivo=...`. O servidor captura o erro de `jose` sem expor sua mensagem original, tokens, dados pessoais ou URL de autorização. Todas as validações permanecem ativas. Atualize, pare o servidor antigo com Ctrl+C e inicie o novo; para conferir a versão na pasta correta, execute `node -p "require('./package.json').version"` (deve mostrar `0.4.2`). Feche a janela de autorização antiga e clique novamente em **Conectar ChatGPT**. Se falhar, copie somente a mensagem de diagnóstico exibida, sem copiar a barra de endereço. A causa do login real não está identificada nem corrigida somente por estes testes.
 
 **Correção de conexão 0.4.1:** novas instalações enviam `ext_agent_host_id=urn:uuid:<UUIDv4>`. O UUID puro gravado pela 0.4.0 é migrado automaticamente ao iniciar uma conexão, preservando o UUID e o Client ID emitido. Logins com Client ID emitido omitem `agent_name_hint`. Não exclua `installation.json`, credenciais ou dados do navegador. Se recebeu `invalid_authorize_request` referente a `ext_agent_host_id`, atualize conforme abaixo, feche a janela antiga de autorização e clique em **Conectar ChatGPT** para abrir uma nova tentativa; a URL antiga não é corrigida pela atualização.
 

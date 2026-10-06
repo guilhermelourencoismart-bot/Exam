@@ -1,6 +1,6 @@
 import { createServer,type Server } from "node:http";
 import { randomBytes,createHash,timingSafeEqual,randomUUID } from "node:crypto";
-import { createLocalJWKSet,jwtVerify,type JWTPayload } from "jose";
+import { createLocalJWKSet,jwtVerify,errors as joseErrors,type JWTPayload } from "jose";
 import { readPrivate,writePrivate } from "./local-files";
 import type { Credential,Vault } from "./vault";
 import { AiError,safeAiError } from "./errors";
@@ -34,6 +34,37 @@ export async function tokenRequest(fields:Record<string,string>,fetcher:typeof f
     !Number.isFinite(value.expires_in)||value.expires_in<=0||typeof value.scope!=="string"||!requiredScopes.every(s=>value.scope.split(/\s+/).includes(s)))throw new AiError("scope","A autorização não concedeu uso direto dos tokens do ChatGPT. Conecte novamente e confira o consentimento do plano.",403);
   return value;
 }
+function identityDiagnostic(code:string,verification:string,reason:string,guidance=""){
+  return new AiError("identity",`Conexão rejeitada. Diagnóstico seguro: código=${code}; verificação=${verification}; motivo=${reason}.${guidance?` ${guidance}`:""}`,403);
+}
+// Never render/log the original error, message, payload, header, key ID or claim value.
+// Only fixed labels and allowlisted JOSE error classes may cross the server boundary.
+export function idTokenDiagnostic(error:unknown):AiError{
+  if(error instanceof joseErrors.JWTExpired||error instanceof joseErrors.JWTClaimValidationFailed){
+    const code=error instanceof joseErrors.JWTExpired?joseErrors.JWTExpired.code:joseErrors.JWTClaimValidationFailed.code;
+    const claim=error.claim,reason=error.reason==="missing"?"campo_obrigatorio_ausente":error.reason==="invalid"?"tipo_invalido":"verificacao_rejeitada";
+    if(claim==="iat"&&error.reason==="check_failed"){
+      if(error instanceof joseErrors.JWTExpired)return identityDiagnostic(code,"iat.maxTokenAge_10m","idade_maxima_excedida","Confira o relógio do Windows e inicie uma nova conexão. A validade exp e o limite adicional de 10 minutos são verificações diferentes.");
+      return identityDiagnostic(code,"iat.relogio","emissao_no_futuro","Confira data, hora e sincronização do relógio do Windows.");
+    }
+    const checks:Record<string,string>={iss:"issuer.descoberta",aud:"audience.clientId_emitido",exp:"exp.relogio",iat:"iat",nbf:"nbf.relogio",nonce:"nonce.mesma_tentativa",sub:"subject",typ:"tipo_token"};
+    const check=Object.hasOwn(checks,claim)?checks[claim]:"claims";
+    return identityDiagnostic(code,check,claim==="exp"&&error instanceof joseErrors.JWTExpired?"token_expirado":reason,
+      claim==="exp"||claim==="nbf"?"Confira o relógio do Windows e inicie uma nova conexão.":"");
+  }
+  if(error instanceof joseErrors.JWSSignatureVerificationFailed)return identityDiagnostic(joseErrors.JWSSignatureVerificationFailed.code,"assinatura","assinatura_nao_confirmada");
+  if(error instanceof joseErrors.JWKSNoMatchingKey)return identityDiagnostic(joseErrors.JWKSNoMatchingKey.code,"jwks.selecao_chave","nenhuma_chave_compativel");
+  if(error instanceof joseErrors.JWKSMultipleMatchingKeys)return identityDiagnostic(joseErrors.JWKSMultipleMatchingKeys.code,"jwks.selecao_chave","multiplas_chaves_compativeis");
+  if(error instanceof joseErrors.JWKSInvalid)return identityDiagnostic(joseErrors.JWKSInvalid.code,"jwks.formato","conjunto_de_chaves_invalido");
+  if(error instanceof joseErrors.JWKInvalid)return identityDiagnostic(joseErrors.JWKInvalid.code,"jwk.formato","chave_invalida");
+  if(error instanceof joseErrors.JOSEAlgNotAllowed)return identityDiagnostic(joseErrors.JOSEAlgNotAllowed.code,"assinatura.algoritmo","algoritmo_nao_permitido");
+  if(error instanceof joseErrors.JOSENotSupported)return identityDiagnostic(joseErrors.JOSENotSupported.code,"assinatura.algoritmo","recurso_nao_suportado");
+  if(error instanceof joseErrors.JWSInvalid)return identityDiagnostic(joseErrors.JWSInvalid.code,"jws.formato","assinatura_estruturada_invalida");
+  if(error instanceof joseErrors.JWTInvalid)return identityDiagnostic(joseErrors.JWTInvalid.code,"jwt.formato","token_estruturado_invalido");
+  if(error instanceof SyntaxError)return identityDiagnostic("INSPER_ID_TOKEN_INVALID_JSON","jwks.formato","json_invalido");
+  if(error instanceof TypeError)return identityDiagnostic("INSPER_ID_TOKEN_TYPE_ERROR","chave_ou_configuracao","tipo_invalido");
+  return identityDiagnostic("INSPER_ID_TOKEN_UNKNOWN_ERROR","validacao_id_token","falha_nao_classificada");
+}
 export async function verifyIdToken(idToken:string,clientId:string,nonce:string,fetcher:typeof fetch=fetch):Promise<JWTPayload>{
   const response=await fetcher("https://auth.openai.com/.well-known/openid-configuration",{redirect:"error",signal:AbortSignal.timeout(20000)});
   if(!response.ok)throw safeAiError(new Error(`${response.status} network`));const metadata=await response.json();
@@ -41,8 +72,10 @@ export async function verifyIdToken(idToken:string,clientId:string,nonce:string,
   if(issuer.protocol!=="https:"||issuer.hostname!=="auth.openai.com"||issuer.port||jwksUrl.protocol!=="https:"||jwksUrl.hostname!=="auth.openai.com"||jwksUrl.port||issuer.username||jwksUrl.username)throw new AiError("identity","Metadados de identidade fora do domínio oficial. A conexão foi rejeitada.",403);
   const keys=await fetcher(jwksUrl,{redirect:"error",signal:AbortSignal.timeout(20000)});if(!keys.ok)throw safeAiError(new Error(`${keys.status} network`));
   let payload:JWTPayload;try{({payload}=await jwtVerify(idToken,createLocalJWKSet(await keys.json()),{issuer:metadata.issuer,audience:clientId,algorithms:["RS256","PS256","ES256","EdDSA"],requiredClaims:["exp","iat","sub","nonce"],clockTolerance:10,maxTokenAge:"10m"}));}
-  catch{throw new AiError("identity","A assinatura, validade ou destinatário do ID token não foi confirmado. A conexão foi rejeitada.",403);}
-  if(typeof payload.nonce!=="string"||!secretEqual(payload.nonce,nonce)||!payload.sub)throw new AiError("identity","Identidade ou nonce de autorização inválidos. A conexão foi rejeitada.",403);
+  catch(error){throw idTokenDiagnostic(error);}
+  if(typeof payload.nonce!=="string")throw identityDiagnostic("INSPER_ID_TOKEN_NONCE_INVALID","nonce.mesma_tentativa","tipo_invalido");
+  if(!secretEqual(payload.nonce,nonce))throw identityDiagnostic("INSPER_ID_TOKEN_NONCE_MISMATCH","nonce.mesma_tentativa","nonce_divergente","Feche a janela antiga e inicie uma nova conexão no aplicativo.");
+  if(!payload.sub)throw identityDiagnostic("INSPER_ID_TOKEN_SUBJECT_INVALID","subject","identidade_ausente");
   return payload;
 }
 export class LocalOAuth{
