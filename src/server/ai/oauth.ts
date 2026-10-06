@@ -10,15 +10,18 @@ export const SCOPES="openid profile email offline_access resource.invoke chatgpt
 export const requiredScopes=["resource.invoke","chatgpt.tokens.use.direct"];
 export type Installation={hostId:string;clientId:string|null};
 export interface InstallationStore{read():Promise<Installation>;save(value:Installation):Promise<void>}
+const bareUuidV4=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class LocalInstallation implements InstallationStore{
-  async read(){const text=await readPrivate("installation.json");if(text){const v=JSON.parse(text);if(typeof v.hostId!=="string"||!v.hostId||(v.clientId!==null&&typeof v.clientId!=="string"))throw new AiError("registration","Registro local inválido. Consulte as instruções de IA.");return v as Installation;}
-    const value={hostId:randomUUID(),clientId:null};await this.save(value);return value;}
+  async read(){const text=await readPrivate("installation.json");if(text){const v=JSON.parse(text);if(typeof v.hostId!=="string"||!v.hostId||(v.clientId!==null&&typeof v.clientId!=="string"))throw new AiError("registration","Registro local inválido. Consulte as instruções de IA.");
+      // Migrate the old UUID representation without changing the installation or issued Client ID.
+      if(bareUuidV4.test(v.hostId)){v.hostId=`urn:uuid:${v.hostId}`;await this.save(v);}return v as Installation;}
+    const value={hostId:`urn:uuid:${randomUUID()}`,clientId:null};await this.save(value);return value;}
   async save(value:Installation){await writePrivate("installation.json",JSON.stringify(value));}
 }
 export function secretEqual(a:string,b:string){const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);}
 export function authorizationUrl(installation:Installation,redirectUri:string,state:string,nonce:string,verifier:string){
   const url=new URL(AUTH);url.search=new URLSearchParams({response_type:"code",client_id:installation.clientId||"dynamic_agent_client",
-    agent_name_hint:"Meu preparo Insper",ext_agent_host_id:installation.hostId,redirect_uri:redirectUri,scope:SCOPES,resource:RESOURCE,
+    ...(!installation.clientId?{agent_name_hint:"Meu preparo Insper"}:{}),ext_agent_host_id:installation.hostId,redirect_uri:redirectUri,scope:SCOPES,resource:RESOURCE,
     code_challenge:createHash("sha256").update(verifier).digest("base64url"),code_challenge_method:"S256",state,nonce}).toString();return url.toString();
 }
 export type TokenReply={access_token:string;refresh_token?:string;id_token?:string;expires_in:number;scope:string;token_type:string};

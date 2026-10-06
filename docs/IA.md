@@ -1,4 +1,4 @@
-# ChatGPT: implementação local · 0.4.0
+# ChatGPT: implementação local · 0.4.1
 
 A conexão e a geração estão implementadas. **Ainda não há uma chamada autenticada validada com a conta do usuário.** Os testes da OpenAI são simulados; as verificações criptográficas usam tokens sintéticos assinados. O aplicativo só registra geração validada após uma inferência autenticada concluída, revisão aceita, armazenamento da prova e exibição das questões no treino.
 
@@ -26,7 +26,9 @@ O usuário forneceu na conversa um resumo técnico da documentação oficial con
 
 ## Registro, consentimento e identidade
 
-O servidor Node abre um callback HTTP em `127.0.0.1`, porta livre, caminho `/auth/callback`. Primeiro login usa `client_id=dynamic_agent_client`, `agent_name_hint=Meu preparo Insper` e um `ext_agent_host_id` estável por instalação. Novos `state`, `nonce` e `code_verifier` são gerados com aleatoriedade criptográfica; PKCE é S256. O callback confere Host, state, duplicações e o Client ID emitido. Logins seguintes usam o identificador emitido, nunca o identificador do Codex.
+O servidor Node abre um callback HTTP em `127.0.0.1`, porta livre, caminho `/auth/callback`. Primeiro login usa `client_id=dynamic_agent_client`, `agent_name_hint=Meu preparo Insper` e um `ext_agent_host_id` estável por instalação no formato `urn:uuid:<UUIDv4>`. Novos `state`, `nonce` e `code_verifier` são gerados com aleatoriedade criptográfica; PKCE é S256. O callback confere Host, state, duplicações e o Client ID emitido. Logins seguintes usam o identificador emitido e omitem `agent_name_hint`, nunca usam o identificador do Codex.
+
+Na 0.4.0, o identificador era enviado como UUID puro; o usuário observou `invalid_authorize_request`, parâmetro `ext_agent_host_id`, e forneceu a exigência de formato da documentação oficial acima. A 0.4.1 migra `installation.json` automaticamente antes de montar a URL: acrescenta `urn:uuid:` somente ao UUIDv4 puro, preserva seu conteúdo e Client ID, grava a mudança e mantém identificadores já formatados. Não toca em credenciais, provas, IndexedDB ou backups. Após atualizar e reiniciar o servidor, feche a janela antiga da OpenAI e clique em **Conectar ChatGPT** para uma nova URL; não reutilize a autorização que falhou. Não é necessário apagar arquivos nem desconectar para executar a migração.
 
 Autorização: `https://auth.openai.com/api/accounts/authorize`. Scopes: `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`. Resource: `https://api.openai.com/v1`.
 

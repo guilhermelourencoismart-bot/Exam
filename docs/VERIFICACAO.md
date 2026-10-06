@@ -1,6 +1,14 @@
-# Verificação de Provas, Revisão e fontes · 0.4.0
+# Verificação de Provas, Revisão e fontes · 0.4.1
 
-Executada na máquina atual: Linux, Node.js 24.19.0, npm 11.9.0, Chromium e PyMuPDF 1.26.6.
+## Correção OAuth 0.4.1
+
+Cinco testes novos exercitam arquivos temporários reais: criação de `urn:uuid:<UUIDv4>`, persistência em outra instância, migração de UUID puro (inclusive maiúsculas) sem mudar UUID/Client ID, preservação de URN existente sem regravar e o valor efetivamente retornado por `LocalOAuth.start()` na URL de autorização. Verificam ausência de `agent_name_hint` quando há Client ID emitido e presença somente no registro inicial. Arquivos sintéticos de credenciais e provas permanecem intactos; nenhum token real é usado. O teste de callback existente também confere a omissão do nome no login posterior ao registro. Autenticação pessoal e geração real continuam pendentes de nova tentativa na máquina do usuário.
+
+Verificações da correção: `npm test` passou com **63 testes**, `npm run typecheck` e `npm run build` passaram. Os testes de fontes e navegador abaixo foram executados na 0.4.0; não foram repetidos para esta mudança restrita ao registro OAuth.
+
+## Verificações anteriores da versão 0.4.0
+
+Executadas em Linux, Node.js 24.19.0, npm 11.9.0, Chromium e PyMuPDF 1.26.6.
 
 - `npm test`: **58 testes passaram**. Mantêm os testes do catálogo, auditorias, gabaritos, pausa, backup e concorrência; acrescentam percentual consolidado de provas de tamanhos diferentes, classificação por área/assunto, primeira exposição e primeira resposta, campos antigos ausentes, visitas/mudanças, composição comparável antes/depois da exclusão de repetições, filtros de data em Brasília, pesos explícitos, simulação, rankings, recorrência, prioridades, pedidos/composição, migração de IndexedDB versão 2 e backup versão 3 com metas, motivos, pesos e configurações. Importação conflitante de motivo não cria um erro sobre uma resposta correta existente.
 - `npm run test:sources`: **7 testes passaram**. Três verificam os originais reais: os 18 hashes/paginação; as 240 letras relidas dos quatro PDFs de gabarito e os códigos/versões dos cadernos; todos os 400 números e alternativas A–E, páginas de texto compartilhado e continuação. Quatro continuam verificando falhas e renderização com PDFs sintéticos temporários.
@@ -16,7 +24,7 @@ Os testes sintéticos continuam exclusivos dos testes, carregados por intercepta
 
 **Situação real do conteúdo:** 18 originais identificados, todos os documentos do inventário disponíveis, 400 questões completas para consulta, 240 com correção automática. Permanecem 160 sem chave comprovada: 50 de 2019.2, 50 de 2020.1 e 60 do simulado identificado como maio. As 60 questões reservadas de P2026C estão aprovadas documentalmente, mas excluídas das listas por padrão. As 11 correspondências sinalizadas no banco foram conferidas; o sinal histórico permanece no arquivo bruto. A inspeção visual de páginas e a evidência de pareamento estão em `docs/FONTES.md` e nos manifestos de auditoria.
 
-Login ChatGPT, geração por IA e correção de redação não foram implementados nem testados. O uso no computador pessoal do usuário não foi observado. Interrupção abrupta do navegador/sistema pode perder aproximadamente o último segundo não gravado; não são adicionadas horas de tempo fechado.
+Login ChatGPT e geração por IA estão implementados, com verificações simuladas descritas abaixo; não há geração autenticada validada na máquina pessoal. Correção de redação continua pendente. Interrupção abrupta do navegador/sistema pode perder aproximadamente o último segundo não gravado; não são adicionadas horas de tempo fechado.
 
 ## Resultados conhecidos dos relatórios
 

@@ -1,4 +1,4 @@
-# Meu preparo · Insper 2027.1 · versão 0.4.0
+# Meu preparo · Insper 2027.1 · versão 0.4.1
 
 Aplicativo pessoal em Next.js e TypeScript, executado no seu computador. Mantém 400 registros do SQLite original, sem banco remoto e sem API paga.
 
@@ -9,6 +9,8 @@ Para baixar pelo GitHub, entre na sua conta, abra [o repositório na versão mai
 As 60 questões P2026C permanecem **reservadas para avaliação** e excluídas por padrão. Há 180 disponíveis sem expor essa reserva, sendo 120 de seleção e 60 de terceiros. O filtro inicial usa seleção e oferece 120. Para incluir a prova reservada, marque explicitamente a opção no treino.
 
 ## Substituir a versão anterior sem perder seus dados
+
+**Correção de conexão 0.4.1:** novas instalações enviam `ext_agent_host_id=urn:uuid:<UUIDv4>`. O UUID puro gravado pela 0.4.0 é migrado automaticamente ao iniciar uma conexão, preservando o UUID e o Client ID emitido. Logins com Client ID emitido omitem `agent_name_hint`. Não exclua `installation.json`, credenciais ou dados do navegador. Se recebeu `invalid_authorize_request` referente a `ext_agent_host_id`, atualize conforme abaixo, feche a janela antiga de autorização e clique em **Conectar ChatGPT** para abrir uma nova tentativa; a URL antiga não é corrigida pela atualização.
 
 1. Na versão antiga, clique em **Exportar backup** (na versão 0.3, em **Mais → Dados e configurações**). Guarde o arquivo `insper-backup.json`.
 2. No terminal antigo, pressione **Ctrl+C**. Feche todas as abas do aplicativo.

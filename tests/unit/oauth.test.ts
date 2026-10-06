@@ -6,11 +6,11 @@ import type { Credential,Vault } from "../../src/server/ai/vault";
 import { dpapiScript } from "../../src/server/ai/vault";
 import { secureLocalRequest } from "../../src/server/ai/http";
 class MemoryVault implements Vault{value:Credential|null=null;async read(){return this.value;}async save(v:Credential){this.value=structuredClone(v);}async clear(){this.value=null;}}
-class MemoryInstallation implements InstallationStore{value:Installation={hostId:"installation-test",clientId:null};async read(){return {...this.value};}async save(v:Installation){this.value={...v};}}
+class MemoryInstallation implements InstallationStore{value:Installation={hostId:"urn:uuid:6ff47b2b-180f-40e2-a37b-3221cb53b2d0",clientId:null};async read(){return {...this.value};}async save(v:Installation){this.value={...v};}}
 const auths:LocalOAuth[]=[];afterEach(()=>auths.splice(0).forEach(a=>a.stop()));
 describe("OAuth local: protocolo simulado, sem conta real",()=>{
  it("registra o aplicativo dinamicamente com PKCE S256, nonce, state e instalação estável",()=>{
-  const i={hostId:"installation-test",clientId:null},url=new URL(authorizationUrl(i,"http://127.0.0.1:1234/auth/callback","state1","nonce1","verifier1"));
+  const i={hostId:"urn:uuid:6ff47b2b-180f-40e2-a37b-3221cb53b2d0",clientId:null},url=new URL(authorizationUrl(i,"http://127.0.0.1:1234/auth/callback","state1","nonce1","verifier1"));
   expect(url.origin+url.pathname).toBe(AUTH);expect(url.searchParams.get("client_id")).toBe("dynamic_agent_client");expect(url.searchParams.get("agent_name_hint")).toBe("Meu preparo Insper");expect(url.searchParams.get("ext_agent_host_id")).toBe(i.hostId);
   expect(url.searchParams.get("code_challenge")).toBe(createHash("sha256").update("verifier1").digest("base64url"));expect(url.searchParams.get("code_challenge_method")).toBe("S256");expect(url.searchParams.get("resource")).toBe(RESOURCE);expect(url.searchParams.get("scope")).toBe(SCOPES);
  });
@@ -23,7 +23,7 @@ describe("OAuth local: protocolo simulado, sem conta real",()=>{
   const callback=new URL(redirect);callback.search=new URLSearchParams({code:"synthetic_code",client_id:"app_insper_test123",state:url.searchParams.get("state")!}).toString();const r=await fetch(callback);expect(r.status).toBe(200);expect(await r.text()).not.toMatch(/synthetic_access|synthetic_refresh|synthetic_code/);
   expect(tokenForm!.get("redirect_uri")).toBe(redirect);expect(tokenForm!.get("client_id")).toBe("app_insper_test123");expect(tokenForm!.get("resource")).toBe(RESOURCE);expect(tokenForm!.has("client_secret")).toBe(false);
   expect(createHash("sha256").update(tokenForm!.get("code_verifier")!).digest("base64url")).toBe(url.searchParams.get("code_challenge"));expect(verificationNonce).toBe(url.searchParams.get("nonce"));expect(vault.value?.scope).toBe(SCOPES);
-  const next=new URL((await oauth.start()).authUrl);expect(next.searchParams.get("client_id")).toBe("app_insper_test123");expect(next.searchParams.get("ext_agent_host_id")).toBe(url.searchParams.get("ext_agent_host_id"));expect(next.searchParams.get("state")).not.toBe(url.searchParams.get("state"));expect(next.searchParams.get("nonce")).not.toBe(url.searchParams.get("nonce"));
+  const next=new URL((await oauth.start()).authUrl);expect(next.searchParams.get("client_id")).toBe("app_insper_test123");expect(next.searchParams.has("agent_name_hint")).toBe(false);expect(next.searchParams.get("ext_agent_host_id")).toBe(url.searchParams.get("ext_agent_host_id"));expect(next.searchParams.get("state")).not.toBe(url.searchParams.get("state"));expect(next.searchParams.get("nonce")).not.toBe(url.searchParams.get("nonce"));
  });
  it("recusa consentimento, registro incompleto e permissões ausentes sem salvar credenciais",async()=>{
   for(const mode of ["denied","missing-registration","missing-scope"]){
