@@ -1,4 +1,4 @@
-# Meu preparo · Insper 2027.1 · versão 0.3.0
+# Meu preparo · Insper 2027.1 · versão 0.4.0
 
 Aplicativo pessoal em Next.js e TypeScript, executado no seu computador. Mantém 400 registros do SQLite original, sem banco remoto e sem API paga.
 
@@ -27,13 +27,25 @@ npm run dev
 
 Use exatamente o mesmo endereço e porta. `localhost`, `127.0.0.1`, outra porta, outro perfil e outro navegador têm bases separadas. Para encerrar: Ctrl+C. Para abrir outra vez: `npm run dev` na nova pasta.
 
-A aplicação não exige Python para uso normal. Não precisa de token, assinatura adicional, banco de dados remoto ou conta de hospedagem.
+A aplicação não exige Python para uso normal. Para IA, autorize seu ChatGPT pelo próprio aplicativo. Não precisa copiar tokens, cadastrar chave de API, contratar banco remoto ou hospedagem.
 
 ## Provas e Revisão
 
 A entrada principal é **Provas**: configure → responda → consulte o relatório. **Revisão** reúne todas as provas finalizadas e o caderno de erros. Fontes, acervo, backup e configurações ficam em **Mais**.
 
-**Inéditas por IA** é a opção principal. Você pode salvar uma prova completa (60 questões, 15 por área) ou personalizada e interpretar pedidos simples, como “5 questões de matemática; 20 questões de português”. A conexão real com o ChatGPT Plus **ainda não está implementada**; “Gerar prova inédita” fica desativado. Configurações salvas não são questões geradas nem tentativas.
+**Inéditas por IA** é a opção principal. A versão 0.4.0 implementa o registro e consentimento próprios do aplicativo via **Sign in with ChatGPT**, inferência direta com OAuth, geração estruturada e revisão em lotes. Não utiliza login do Codex nem chave de API paga. A chamada real com sua conta ainda precisa ser validada no seu computador; os testes de IA executados aqui usam respostas simuladas.
+
+Depois de atualizar:
+
+1. Em **Provas → Inéditas por IA**, clique em **Conectar ChatGPT**.
+2. Na janela oficial da OpenAI, entre na conta que tem Plus e autorize **Meu preparo Insper** a usar os tokens do plano. Se a janela não abrir, clique em **Abrir autorização oficial do ChatGPT**.
+3. Quando aparecer **ChatGPT conectado**, clique em **Testar 3 questões de sistemas lineares**.
+4. Espere gerar e revisar. As três questões abrirão automaticamente, com enunciado, equações e alternativas. Clique em **Iniciar ou retomar** para responder.
+5. Depois dessa exibição, use **Gerar prova inédita** com as quantidades personalizadas ou **Prova completa** (60 questões, 15 por área). Pedidos simples, como “20 questões de português”, continuam configurando a composição antes da geração.
+
+O registro acontece automaticamente no primeiro consentimento. Nenhum Client ID precisa ser copiado manualmente. A tela distingue conta autorizada de geração autenticada já exibida. Só conclui um lote depois de `response.completed`, valida o formato e revisa o gabarito em outra chamada. No teste inicial, o código também resolve o sistema e confere as alternativas. Uma prova abre apenas quando toda a quantidade foi aceita. Se houver limite ou interrupção, clique em **Retomar geração**; os lotes aceitos continuam salvos no computador. Os limites são os do ChatGPT e gerar/revisar consome essa capacidade. Nenhuma questão do banco é usada para completar a geração.
+
+Credenciais ficam fora da pasta do aplicativo, em `%LOCALAPPDATA%\InsperPreparo`, cifradas com DPAPI do seu usuário do Windows. Elas não entram no navegador, GitHub ou backup. Não copie essa pasta para o GitHub nem a compartilhe. A implementação Windows usa Node.js e Windows PowerShell, sem WSL; a execução real do DPAPI e do login em Windows ainda depende do teste na sua máquina. Veja [IA e solução de erros](docs/IA.md).
 
 Para treinar agora, escolha **Banco conferido**, configure a composição e clique em **Criar prova do banco**. As questões existentes são identificadas como oficiais ou de terceiros.
 
@@ -67,7 +79,7 @@ Novas fontes importadas pelo aplicativo não liberam questões automaticamente. 
 
 ## Backup e atualização
 
-O backup versão 3 inclui marcações, tentativas, respostas, marcações por tentativa, tempos, telemetria existente, configurações de provas, motivos de erro, metas e pesos pessoais. Aceita backups versões 1 e 2. Registros de visitas e mudanças ausentes nas tentativas antigas permanecem indisponíveis. O caderno de erros é reconstruído a partir das tentativas finalizadas, sem estatísticas duplicadas.
+O backup versão 4 inclui também enunciados, alternativas, gabaritos, resoluções e revisões das questões autorais. Quando não há conteúdo autoral, conserva o formato 3. Aceita backups versões 1, 2, 3 e 4. Mantém marcações, tentativas, respostas, tempos, telemetria existente, configurações, motivos de erro, metas e pesos pessoais. Registros de visitas e mudanças ausentes nas tentativas antigas permanecem indisponíveis. O caderno de erros é reconstruído a partir das tentativas finalizadas, sem estatísticas duplicadas.
 
 Pause antes de exportar/importar. A importação é validada e atômica, sem alterações parciais. Tentativas existentes com o mesmo identificador são preservadas e a tela informa quantas foram mantidas. Um gabarito adulterado ou uma revisão de conteúdo incompatível é rejeitado; o backup não pode liberar conteúdo.
 
@@ -75,7 +87,7 @@ O backup **não inclui os PDFs**. Em atualizações futuras, preserve também `p
 
 ## Organização e verificações
 
-`src/domain`: filtros, tentativa, cronômetro e correção puros. `src/storage`: IndexedDB e backup. `src/hooks`: sessão ativa e proteção entre abas. `src/components`: catálogo, fontes, treino, imagens, resultado e revisão. `src/server` e `src/app/api/sources`: recepção local de PDFs. `scripts`: extração/auditoria. `src/ai`: continua desativado.
+`src/domain`: filtros, tentativa, cronômetro e correção puros. `src/storage`: IndexedDB e backup. `src/hooks`: sessão ativa e proteção entre abas. `src/components`: catálogo, fontes, treino, imagens, resultado e revisão. `src/server/ai`: OAuth, verificação de identidade, armazenamento protegido, inferência e geração. `src/app/api/ai`: rotas exclusivas do servidor local. `src/ai`: contratos públicos sem tokens. `src/server` e `src/app/api/sources`: recepção local de PDFs. `scripts`: extração/auditoria.
 
 ```sh
 npm ci
@@ -90,4 +102,4 @@ Encerre outros servidores na porta 3000 antes de `test:e2e`. O teste inicia seu 
 
 Para reextrair conteúdo: Python 3.12+, `pdftotext` (Poppler), e `python3 -m pip install -r scripts/requirements.txt`. Depois: `npm run sources:inspect`, `npm run data:extract`, `npm run data:check`, `npm run test:sources`. A aprovação fica em `scripts/source-audits.json`; não preencha marcações de revisão sem conferir os PDFs reais. Os passos detalhados estão em [docs/FONTES.md](docs/FONTES.md).
 
-Veja [a verificação e seus limites](docs/VERIFICACAO.md), [a auditoria do SQLite](docs/DADOS.md) e [o estado da IA](docs/IA.md). Geração por IA e correção de redação permanecem para as próximas etapas.
+Veja [a verificação e seus limites](docs/VERIFICACAO.md), [a auditoria do SQLite](docs/DADOS.md) e [o estado da IA](docs/IA.md). A geração foi implementada e testada com chamadas simuladas; sua validação autenticada depende do primeiro teste no computador pessoal. Correção de redação permanece para a próxima etapa.

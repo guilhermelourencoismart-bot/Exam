@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { utility } from "./helpers";
 test("duas entradas principais, acervo no menu e filtros preservados",async({page})=>{
  await page.goto("/");await expect(page.getByRole("navigation",{name:"Navegação principal"}).getByRole("button")).toHaveCount(2);
- await expect(page.getByRole("button",{name:"Gerar prova inédita"})).toBeDisabled();await utility(page,"Fontes e acervo");await expect(page.getByText("400 registros encontrados")).toBeVisible();
+ await expect(page.getByRole("button",{name:"Gerar prova inédita"})).toBeEnabled();await expect(page.getByRole("button",{name:"Conectar ChatGPT",exact:true})).toBeEnabled();await utility(page,"Fontes e acervo");await expect(page.getByText("400 registros encontrados")).toBeVisible();
  await page.getByLabel("Origem do acervo").selectOption("official");await page.getByLabel("Disciplina do acervo").selectOption("Matemática");await page.getByLabel("Assunto do acervo").selectOption("Sistemas lineares");await expect(page.locator(".question-card")).toHaveCount(7);
  await page.getByLabel("Buscar questão").fill("nada-xyz");await expect(page.getByText("0 registros encontrados")).toBeVisible();await page.getByLabel("Buscar questão").fill("");await page.getByLabel("Prova do acervo").selectOption("P2026A");await expect(page.locator(".question-card")).toHaveCount(1);
 });

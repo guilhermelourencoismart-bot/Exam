@@ -1,5 +1,4 @@
-// No API client or paid fallback exists in stage 1.
 export const aiStatus = {
-  enabled: false,
-  message: "IA ainda não conectada. O aplicativo não usa sua assinatura automaticamente e não faz chamadas pagas."
+  enabled: true,
+  message: "Conexão local Sign in with ChatGPT disponível em Provas. Autorize este aplicativo e execute o teste de três sistemas lineares. Credenciais ficam fora do navegador e dos backups. Nenhuma alternativa paga de API é implementada."
 } as const;

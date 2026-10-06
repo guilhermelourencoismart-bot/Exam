@@ -1,5 +1,6 @@
 import type { Bookmark, Backup } from "./backup";
 import type { Attempt } from "../domain/training";
+import { itemAnswer } from "../domain/training";
 import { defaultPreferences, type Preferences, type ErrorNote } from "../domain/preferences";
 import type { SavedPlan } from "../domain/proof-plan";
 // Keep the original database name. Upgrade stores without deleting bookmarks.
@@ -63,19 +64,24 @@ export async function exportBackup():Promise<Backup>{
   const db=await openDatabase();return new Promise((resolve,reject)=>{
     const stores=["bookmarks","attempts","preferences","errorNotes","plans"],tx=db.transaction(stores,"readonly");
     const requests=Object.fromEntries(stores.map(s=>[s,tx.objectStore(s).getAll()]));
-    tx.oncomplete=()=>{db.close();resolve({app:"insper-pessoal",schemaVersion:3,exportedAt:new Date().toISOString(),bookmarks:requests.bookmarks.result,attempts:requests.attempts.result,preferences:requests.preferences.result,errorNotes:requests.errorNotes.result,plans:requests.plans.result});};
+    tx.oncomplete=()=>{db.close();resolve({app:"insper-pessoal",schemaVersion:(requests.attempts.result as Attempt[]).some(a=>a.items.some(i=>i.origin==="ai"))?4:3,exportedAt:new Date().toISOString(),bookmarks:requests.bookmarks.result,attempts:requests.attempts.result,preferences:requests.preferences.result,errorNotes:requests.errorNotes.result,plans:requests.plans.result});};
     tx.onabort=()=>{db.close();reject(new Error("Falha ao exportar os dados locais."));};
   });
 }
 export async function mergeBackup(backup:Backup):Promise<{addedAttempts:number;keptAttempts:number}>{
-  return write(["bookmarks","attempts","preferences","errorNotes","plans"],(tx,done)=>{
+  return write(["bookmarks","attempts","preferences","errorNotes","plans"],(tx,done,fail)=>{
+    const existing=tx.objectStore("attempts").getAll();
+    existing.onsuccess=()=>{
+      const versions=new Map((existing.result as Attempt[]).flatMap(a=>a.items).filter(i=>i.author).map(i=>[i.id,i.author!.revision]));
+      if(backup.attempts.flatMap(a=>a.items).some(i=>i.author&&versions.has(i.id)&&versions.get(i.id)!==i.author.revision))fail("Uma questão autoral tem versões conflitantes. Nada foi importado; o histórico local foi preservado.");
+    };
     const summary={addedAttempts:0,keptAttempts:0};done(summary);
     for(const b of backup.bookmarks){const s=tx.objectStore("bookmarks"),r=s.get(b.questionId);r.onsuccess=()=>{if(!r.result)s.put(b);};}
     for(const a of backup.attempts){const s=tx.objectStore("attempts"),r=s.get(a.id);r.onsuccess=()=>{if(r.result)summary.keptAttempts++;else{s.put(a);summary.addedAttempts++;}};}
     for(const name of ["preferences","plans"] as const)for(const value of backup[name]??[]){const s=tx.objectStore(name),r=s.get(value.id);r.onsuccess=()=>{if(!r.result)s.put(value);};}
     for(const note of backup.errorNotes??[]){const s=tx.objectStore("errorNotes"),r=s.get(note.id);r.onsuccess=()=>{if(r.result)return;
       const ar=tx.objectStore("attempts").get(note.attemptId);ar.onsuccess=()=>{const a=ar.result as Attempt|undefined,item=a?.items.find(i=>i.id===note.questionId),answer=a?.answers[note.questionId];
-        if(a?.status==="completed"&&item?.audit.key&&answer!=null&&answer!==item.audit.key.answer)s.put(note);
+        if(a?.status==="completed"&&item&&answer!=null&&answer!==itemAnswer(item))s.put(note);
       };
     };}
   });

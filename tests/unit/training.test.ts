@@ -50,7 +50,7 @@ describe("treino e versão",()=>{
     const a=await saveAttempt(finishAttempt(createAttempt(qs,3,"Teste")),null);
     const backup=await exportBackup(),ids=new Set(qs.map(q=>q.id));
     const parsed=validateBackup(backup,ids,qs);expect(parsed.attempts[0]).toEqual(a);
-    const forged=structuredClone(backup);forged.attempts[0].items[0].audit.key!.answer="E";
+    const forged=structuredClone(backup);forged.attempts[0].items[0].audit!.key!.answer="E";
     expect(()=>validateBackup(forged,ids,qs)).toThrow("versão");
     const badTime=structuredClone(backup);badTime.attempts[0].totalMs=5000;
     expect(()=>validateBackup(badTime,ids,qs)).toThrow();

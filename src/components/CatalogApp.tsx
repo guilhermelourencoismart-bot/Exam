@@ -2,7 +2,8 @@
 import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import type { Catalog } from "@/domain/types";
 import { attemptFromPlan, type ProofPlan, type SavedPlan } from "@/domain/proof-plan";
-import { canTrain,createAttempt,type Attempt } from "@/domain/training";
+import { canTrain,attemptFromItems,authoredItems,itemAnswer,type Attempt } from "@/domain/training";
+import { useChatGPT } from "@/hooks/useChatGPT";
 import type { ResultRow } from "@/domain/analytics";
 import { defaultPreferences,type Preferences,type ErrorNote,type ErrorReason } from "@/domain/preferences";
 import { deletePlan,mergeBackup,readAttempts,readBookmarks,readErrorNotes,readPlans,readPreferences,saveAttempt,saveErrorNote,savePlan,savePreferences,setBookmark } from "@/storage/indexed-db";
@@ -16,6 +17,7 @@ import BackupControls from "./BackupControls";
 import CatalogBrowser from "./CatalogBrowser";
 import PersonalSettings from "./PersonalSettings";
 export default function CatalogApp(){
+  const ai=useChatGPT(),adopting=useRef(new Set<string>()),acknowledged=useRef(new Set<string>());
   const [catalog,setCatalog]=useState<Catalog|null>(null),[loadError,setLoadError]=useState("");
   const [tab,setTab]=useState<"proofs"|"review">("proofs"),[utility,setUtility]=useState<"sources"|"settings"|null>(null),[menu,setMenu]=useState(false);
   const [attempts,setAttempts]=useState<Attempt[]>([]),[plans,setPlans]=useState<SavedPlan[]>([]),[notes,setNotes]=useState<ErrorNote[]>([]),[bookmarks,setBookmarks]=useState<Bookmark[]>([]),[preferences,setPreferences]=useState<Preferences>(defaultPreferences);
@@ -34,7 +36,19 @@ export default function CatalogApp(){
   function navigate(next:"proofs"|"review"){setTab(next);setUtility(null);setMenu(false);window.scrollTo({top:0,behavior:"auto"});}
   function open(id:string){setSelected(id);setTab("proofs");setUtility(null);window.scrollTo({top:0,behavior:"auto"});}
   function showUtility(value:"sources"|"settings"){setUtility(value);setMenu(false);window.scrollTo({top:0,behavior:"auto"});}
-  async function create(plan:ProofPlan){if(!catalog)return;const a=await saveAttempt(attemptFromPlan(plan,catalog.questions),null);setAttempts(prior=>[a,...prior]);open(a.id);}
+  async function create(plan:ProofPlan){if(!catalog)return;if(plan.origin==="ai"){await ai.generate(plan,[...new Set(attempts.flatMap(a=>a.items.map(i=>i.id)))].slice(-5000));return;}const a=await saveAttempt(attemptFromPlan(plan,catalog.questions),null);setAttempts(prior=>[a,...prior]);open(a.id);}
+  useEffect(()=>{
+    const job=ai.job;if(!job||job.status!=="completed"||!storageReady||running||utility||tab!=="proofs"||adopting.current.has(job.id))return;
+    adopting.current.add(job.id);const id=`ai-proof-${job.id}`,existing=attempts.find(a=>a.id===id);
+    if(existing){open(existing.id);return;}
+    try{const a={...attemptFromItems(authoredItems(job.questions),job.plan.mode==="full"?"Simulado completo · inéditas por IA":job.plan.prompt||"Prova personalizada · inéditas por IA",job.plan.mode==="full"?"full":"thematic"),id};
+    void saveAttempt(a,null).then(saved=>{setAttempts(prior=>[saved,...prior]);open(saved.id);}).catch(e=>{setMessage(`${e.message} A prova gerada permanece no servidor local. Recarregue após corrigir o armazenamento para tentar salvá-la novamente.`);refreshAttempts();});
+    }catch(e){setMessage(e instanceof Error?e.message:"Conteúdo gerado inválido. Nada foi salvo.");}
+  },[ai.job,storageReady,running,utility,tab,attempts,refreshAttempts]);
+  useEffect(()=>{
+    const author=current?.items[0].author,job=ai.job;if(!author||!job||job.status!=="completed"||author.provenance.generationId!==job.id||utility||tab!=="proofs"||acknowledged.current.has(job.id))return;
+    acknowledged.current.add(job.id);void ai.acknowledge(job.id,author.id).then(()=>ai.dismiss()).catch(e=>{acknowledged.current.delete(job.id);setMessage(`As questões foram salvas, mas a confirmação da conexão falhou: ${e.message}`);});
+  },[current?.id,ai.job,ai.acknowledge,tab,utility]);
   async function saveConfiguration(plan:ProofPlan){const p:SavedPlan={id:crypto.randomUUID(),title:plan.prompt.trim()||(plan.mode==="full"?"Prova completa · 60 questões":plan.lines.map(l=>`${l.quantity} ${l.topic||l.discipline||l.area}`).join("; ")),createdAt:new Date().toISOString(),plan:structuredClone(plan)};p.title=p.title.slice(0,300);await savePlan(p);setPlans(await readPlans());}
   async function removeConfiguration(id:string){await deletePlan(id);setPlans(await readPlans());}
   async function settings(p:Preferences){await savePreferences(p);setPreferences(p);setMessage("Metas e pesos salvos neste navegador.");}
@@ -42,8 +56,8 @@ export default function CatalogApp(){
   async function review(rows:ResultRow[]){
     if(!catalog||!rows.length)throw new Error("Selecione erros para criar a revisão.");
     const unique=[...new Map(rows.filter(r=>r.outcome==="wrong").map(r=>[r.item.id,r])).values()];
-    const questions=unique.map(r=>{const q=catalog.questions.find(q=>q.id===r.item.id);if(!q||!canTrain(q)||q.audit!.revision!==r.item.audit.revision)throw new Error("O conteúdo conferido de uma questão não está disponível nesta versão. Preserve as fontes da tentativa.");return q;});
-    const a=await saveAttempt({...createAttempt(questions,questions.length,`Revisão · ${questions.length} erros selecionados`,true),kind:"review"},null);setAttempts(prior=>[a,...prior]);open(a.id);
+    const items=unique.map(r=>{if(r.item.origin==="ai"){itemAnswer(r.item);return r.item;}const q=catalog.questions.find(q=>q.id===r.item.id);if(!q||!canTrain(q)||q.audit!.revision!==r.item.audit?.revision)throw new Error("O conteúdo conferido de uma questão não está disponível nesta versão. Preserve as fontes da tentativa.");return r.item;});
+    const a=await saveAttempt(attemptFromItems(items,`Revisão · ${items.length} erros selecionados`,"review"),null);setAttempts(prior=>[a,...prior]);open(a.id);
   }
   async function importBackup(file:File){if(!catalog)return;setBusy(true);try{
     if(file.size>50_000_000)throw new Error("Backup maior que 50 MB.");
@@ -59,8 +73,8 @@ export default function CatalogApp(){
       {message&&<div role="status" className="feedback app-feedback"><p>{message}</p><button aria-label="Fechar mensagem" onClick={()=>setMessage("")}>×</button></div>}
       {utility&&<button className="back-button" onClick={()=>setUtility(null)}>← Voltar a {tab==="proofs"?"Provas":"Revisão"}</button>}
       {utility==="sources"&&<><SourcesPanel catalog={catalog}/><CatalogBrowser catalog={catalog} savedIds={bookmarks.map(b=>b.questionId)} protectedIds={protectedIds} disabled={!storageReady||busy} onSave={bookmark}/></>}
-      {utility==="settings"&&<section><div className="page-heading"><div><span className="eyebrow">Seu aplicativo</span><h1>Dados e configurações</h1><p>Seu histórico fica neste navegador. Guarde uma cópia antes de atualizar.</p></div></div><div className="panel"><h2>Backup do histórico</h2><BackupControls bookmarks={bookmarks} disabled={!storageReady||busy||running} onImport={importBackup} onMessage={setMessage}/><p className="muted">Inclui respostas, tempos, visitas registradas, motivos dos erros, metas, pesos e configurações salvas. Os PDFs permanecem na pasta do aplicativo. Backups das versões anteriores continuam aceitos.</p></div><div className="panel settings-panel"><h2>Metas e pesos</h2><PersonalSettings key={JSON.stringify(preferences)} preferences={preferences} onSave={settings}/></div><div className="panel settings-panel"><h2>Integração com IA</h2><p>A geração inédita é o objetivo principal. A conexão local com seu ChatGPT Plus ainda precisa ser implementada e validada. Não há cobrança de API nem conexão automática com sua conta.</p></div></section>}
-      {!utility&&tab==="proofs"&&(current?current.status==="completed"?<><button className="back-button" onClick={()=>setSelected(null)}>← Voltar a Provas</button><AttemptResult {...shared!} attempt={current}/></>:<AttemptRunner key={current.id} initial={current} onSaved={refreshAttempts} onRunningChange={setRunning} onExit={()=>{setSelected(null);refreshAttempts();}}/>:<ProofsPanel catalog={catalog} attempts={attempts} plans={plans} storageReady={storageReady} onCreate={create} onOpen={open} onSavePlan={saveConfiguration} onDeletePlan={removeConfiguration}/>)}
+      {utility==="settings"&&<section><div className="page-heading"><div><span className="eyebrow">Seu aplicativo</span><h1>Dados e configurações</h1><p>Seu histórico fica neste navegador. Guarde uma cópia antes de atualizar.</p></div></div><div className="panel"><h2>Backup do histórico</h2><BackupControls bookmarks={bookmarks} disabled={!storageReady||busy||running} onImport={importBackup} onMessage={setMessage}/><p className="muted">Inclui respostas, tempos, visitas registradas, motivos dos erros, metas, pesos, configurações e questões autorais completas. Credenciais do ChatGPT ficam fora do navegador e do backup. Os PDFs permanecem na pasta do aplicativo. Backups das versões anteriores continuam aceitos.</p></div><div className="panel settings-panel"><h2>Metas e pesos</h2><PersonalSettings key={JSON.stringify(preferences)} preferences={preferences} onSave={settings}/></div><div className="panel settings-panel"><h2>Integração com IA</h2><p>Use Conectar ChatGPT em Provas. O fluxo registra e autoriza este aplicativo a usar os tokens do seu plano; o login do Codex não é aproveitado. A primeira geração deve ter três questões de sistemas lineares. Não existe alternativa de API paga.</p></div></section>}
+      {!utility&&tab==="proofs"&&(current?current.status==="completed"?<><button className="back-button" onClick={()=>setSelected(null)}>← Voltar a Provas</button><AttemptResult {...shared!} attempt={current}/></>:<AttemptRunner key={current.id} initial={current} onSaved={refreshAttempts} onRunningChange={setRunning} onExit={()=>{setSelected(null);refreshAttempts();}}/>:<ProofsPanel catalog={catalog} attempts={attempts} plans={plans} storageReady={storageReady} onCreate={create} onOpen={open} onSavePlan={saveConfiguration} onDeletePlan={removeConfiguration} ai={ai}/>)}
       {!utility&&tab==="review"&&<ReviewPanel {...shared!}/>}
     </>}
     <footer className="app-footer"><span>Meu preparo · Insper 2027.1</span><span>Seu ritmo. Seu histórico.</span></footer>

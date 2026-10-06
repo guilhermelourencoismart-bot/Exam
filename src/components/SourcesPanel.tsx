@@ -32,7 +32,7 @@ export default function SourcesPanel({ catalog }: { catalog: Catalog }) {
       <p>Pareamento: {doc.pareamento || "Não informado"}</p><code>{doc.sha256}</code>
       {doc.url && <p><a href={doc.url} target="_blank" rel="noreferrer">Abrir PDF</a></p>}
     </details>)}</div>
-    <h3 className="section-title">Integração de IA · etapa futura</h3><p>{aiStatus.message}</p>
+    <h3 className="section-title">Integração local com ChatGPT</h3><p>{aiStatus.message}</p>
     <p className="muted">A documentação oficial do Codex descreve login com ChatGPT e uso do plano Plus no Codex. Uma integração local ainda precisa validar a ponte com o Codex e seus limites; não há login ou gerador nesta versão.</p>
     <h3 className="section-title">Fontes recebidas</h3>{catalog.sources.map(s => <p key={s.name} className="source-hash">{s.name}<br /><code>{s.sha256}</code></p>)}
   </section>;

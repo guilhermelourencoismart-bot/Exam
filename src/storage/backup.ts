@@ -4,15 +4,16 @@ import type { Question } from "../domain/types";
 import { areas } from "../domain/classification";
 import { errorReasons, type ErrorNote, type Preferences } from "../domain/preferences";
 import { validatePlan, type SavedPlan } from "../domain/proof-plan";
+import { validateAuthored } from "../domain/authored";
 export type Bookmark = { questionId: string; savedAt: string };
-export type Backup = { app: "insper-pessoal"; schemaVersion: 3; exportedAt: string; bookmarks: Bookmark[]; attempts: Attempt[];
+export type Backup = { app: "insper-pessoal"; schemaVersion: 3 | 4; exportedAt: string; bookmarks: Bookmark[]; attempts: Attempt[];
   preferences?: Preferences[]; errorNotes?: ErrorNote[]; plans?: SavedPlan[] };
 function isDate(s: unknown): s is string { return typeof s === "string" && Number.isFinite(Date.parse(s)); }
 function fail(): never { throw new Error("Backup contém tentativa, resposta, tempo ou versão de conteúdo inválidos. Nada foi importado."); }
 export function validateBackup(input: unknown, knownIds: ReadonlySet<string>, questions: readonly Question[] = []): Backup {
   if (!input || typeof input !== "object") throw new Error("Arquivo de backup inválido.");
   const b = input as Partial<Omit<Backup,"schemaVersion">> & {schemaVersion?:number};
-  if (b.app !== "insper-pessoal" || ![1,2,3].includes(b.schemaVersion as number) || !Array.isArray(b.bookmarks) ||
+  if (b.app !== "insper-pessoal" || ![1,2,3,4].includes(b.schemaVersion as number) || !Array.isArray(b.bookmarks) ||
       b.bookmarks.length > 100_000 || !isDate(b.exportedAt)) throw new Error("Formato ou versão de backup incompatível.");
   const ids = new Set<string>();
   const bookmarks = b.bookmarks.map(item => {
@@ -21,7 +22,7 @@ export function validateBackup(input: unknown, knownIds: ReadonlySet<string>, qu
     ids.add(item.questionId); return { questionId: item.questionId, savedAt: item.savedAt };
   });
   let attempts: Attempt[] = [];
-  if (b.schemaVersion === 2 || b.schemaVersion === 3) {
+  if (b.schemaVersion === 2 || b.schemaVersion === 3 || b.schemaVersion === 4) {
     if (!Array.isArray(b.attempts) || b.attempts.length > 10_000) fail();
     const attemptIds = new Set<string>();
     attempts = b.attempts.map(a => {
@@ -38,10 +39,17 @@ export function validateBackup(input: unknown, knownIds: ReadonlySet<string>, qu
         if (!item || itemIds.has(item.id)) fail();
         const q = questions.find(q => q.id === item.id);
         // A backup cannot supply an unverified or altered answer key.
-        if (!q || !canTrain(q) || JSON.stringify(item.audit) !== JSON.stringify(q.audit) ||
+        if(item.origin === "ai"){
+          if(b.schemaVersion!==4||item.audit!==undefined)fail();
+          const author=validateAuthored(item.author);
+          if(author.id!==item.id||item.examId!==`AI-${author.provenance.generationId}`||!Number.isInteger(item.number)||item.number<1||
+            item.discipline!==author.discipline||item.topic!==author.topic||item.partition!=="train"||item.reservedForEvaluation!==false||
+            JSON.stringify(item.resolution)!==JSON.stringify({text:author.explanation,source:"ai",model:author.provenance.reviewerModel,generatedAt:author.provenance.generatedAt})||
+            Object.keys(item).some(k=>!["id","examId","number","discipline","topic","partition","reservedForEvaluation","origin","author","resolution"].includes(k)))fail();
+        }else if (!q || !canTrain(q) || JSON.stringify(item.audit) !== JSON.stringify(q.audit) ||
             item.examId !== q.examId || item.number !== q.number || item.discipline !== q.discipline ||
             item.topic !== q.topic || item.partition !== (q.partition || "não informado") ||
-            item.reservedForEvaluation !== !!q.reservedForEvaluation || (item.origin !== undefined && item.origin !== q.origin) || item.resolution !== undefined) fail();
+            item.reservedForEvaluation !== !!q.reservedForEvaluation || (item.origin !== undefined && item.origin !== q.origin) || item.resolution !== undefined || item.author!==undefined) fail();
         const answer = a.answers[item.id];
         if ((answer !== null && !letters.includes(answer)) || typeof a.reviewFlags[item.id] !== "boolean" ||
             !Number.isFinite(a.timesMs[item.id]) || a.timesMs[item.id] < 0) fail();
@@ -67,7 +75,7 @@ export function validateBackup(input: unknown, knownIds: ReadonlySet<string>, qu
     });
   }
   const preferences:Preferences[]=[],errorNotes:ErrorNote[]=[],plans:SavedPlan[]=[];
-  if(b.schemaVersion===3){
+  if(b.schemaVersion===3||b.schemaVersion===4){
     if(!Array.isArray(b.preferences)||b.preferences.length>1||!Array.isArray(b.errorNotes)||b.errorNotes.length>100_000||!Array.isArray(b.plans)||b.plans.length>1000)fail();
     for(const p of b.preferences){
       if(!p || p.id!=="personal" || (p.goalPercentage!==null && (!Number.isFinite(p.goalPercentage)||p.goalPercentage<0||p.goalPercentage>100)) || !p.areaGoals || Object.entries(p.areaGoals).some(([area,n])=>!areas.includes(area as typeof areas[number])||!Number.isFinite(n)||n<0||n>100))fail();
@@ -82,5 +90,9 @@ export function validateBackup(input: unknown, knownIds: ReadonlySet<string>, qu
     const planIds=new Set<string>();
     for(const p of b.plans){if(!p||typeof p.id!=="string"||!p.id||p.id.length>128||planIds.has(p.id)||typeof p.title!=="string"||p.title.length>300||!isDate(p.createdAt)||!validatePlan(p.plan))fail();planIds.add(p.id);plans.push(structuredClone(p));}
   }
-  return { app:"insper-pessoal",schemaVersion:3,exportedAt:b.exportedAt,bookmarks,attempts,preferences,errorNotes,plans };
+  const versions=new Map<string,string>();
+  for(const item of attempts.flatMap(a=>a.items).filter(i=>i.origin==="ai")){
+    const v=item.author!.revision;if(versions.has(item.id)&&versions.get(item.id)!==v)fail();versions.set(item.id,v);
+  }
+  return { app:"insper-pessoal",schemaVersion:attempts.some(a=>a.items.some(i=>i.origin==="ai"))?4:3,exportedAt:b.exportedAt,bookmarks,attempts,preferences,errorNotes,plans };
 }

@@ -1,6 +1,7 @@
 import { filterQuestions, type Filters } from "./catalog";
 import type { ContentAudit, Letter, Question } from "./types";
 import { areaOf, areas } from "./classification";
+import { validateAuthored, type AuthoredQuestion } from "./authored";
 export const letters: readonly Letter[] = ["A", "B", "C", "D", "E"];
 const shaPattern = /^[a-f0-9]{64}$/;
 export function canTrain(q: Question): boolean {
@@ -13,8 +14,9 @@ export function canTrain(q: Question): boolean {
 }
 export type TrainingItem = {
   id: string; examId: string; number: number; discipline: string; topic: string;
-  partition: string; reservedForEvaluation: boolean; audit: ContentAudit;
+  partition: string; reservedForEvaluation: boolean; audit?: ContentAudit;
   origin?: "official" | "third-party" | "ai";
+  author?: AuthoredQuestion;
   resolution?: { text: string; source: "ai"; model: string; generatedAt: string };
 };
 export type Attempt = {
@@ -67,17 +69,32 @@ export function addElapsed(attempt: Attempt, deltaMs: number): Attempt {
 export function gradeAttempt(attempt: Attempt) {
   const rows = attempt.items.map(q => {
     const answer = attempt.answers[q.id];
-    if (!q.audit.key?.alternativesChecked || q.audit.key.appliesToSha256 !== q.audit.sourceSha256) {
-      throw new Error("Gabarito não conferido para a versão desta tentativa.");
-    }
-    return { item: q, answer, expected: q.audit.key.answer, timeMs: attempt.timesMs[q.id],
-      outcome: answer === null ? "blank" as const : answer === q.audit.key.answer ? "correct" as const : "wrong" as const };
+    const expected=itemAnswer(q);
+    return { item: q, answer, expected, timeMs: attempt.timesMs[q.id],
+      outcome: answer === null ? "blank" as const : answer === expected ? "correct" as const : "wrong" as const };
   });
   const correct = rows.filter(r => r.outcome === "correct").length;
   return { rows, correct, wrong: rows.filter(r => r.outcome === "wrong").length,
     blank: rows.filter(r => r.outcome === "blank").length, percentage: correct / rows.length * 100,
     totalMs: attempt.totalMs };
 }
+export function itemAnswer(q:TrainingItem):Letter{
+  if(q.origin==="ai"){
+    const author=validateAuthored(q.author);
+    if(q.audit!==undefined||author.id!==q.id||author.discipline!==q.discipline||author.topic!==q.topic)throw new Error("Questão autoral não corresponde ao gabarito desta versão.");
+    return author.answer;
+  }
+  if(q.author!==undefined||!q.audit?.key?.alternativesChecked||q.audit.key.appliesToSha256!==q.audit.sourceSha256)throw new Error("Gabarito não conferido para a versão desta tentativa.");
+  return q.audit.key.answer;
+}
+export function attemptFromItems(items:TrainingItem[],title:string,kind:Attempt["kind"]="thematic"):Attempt{
+  if(!items.length||items.length>400||new Set(items.map(i=>i.id)).size!==items.length)throw new Error("Lista de questões inválida ou repetida.");
+  items.forEach(itemAnswer);const now=new Date().toISOString();
+  return {id:crypto.randomUUID(),title,createdAt:now,updatedAt:now,finishedAt:null,status:"paused",revision:0,items:structuredClone(items),
+    answers:Object.fromEntries(items.map(q=>[q.id,null])),reviewFlags:Object.fromEntries(items.map(q=>[q.id,false])),timesMs:Object.fromEntries(items.map(q=>[q.id,0])),totalMs:0,currentIndex:0,kind,
+    telemetry:{version:1,visits:Object.fromEntries(items.map((q,i)=>[q.id,i===0?1:0])),answerChanges:Object.fromEntries(items.map(q=>[q.id,0]))}};
+}
+export function authoredItems(questions:AuthoredQuestion[]):TrainingItem[]{return questions.map((q,i)=>({id:q.id,examId:`AI-${q.provenance.generationId}`,number:i+1,discipline:q.discipline,topic:q.topic,partition:"train",reservedForEvaluation:false,origin:"ai",author:validateAuthored(q),resolution:{text:q.explanation,source:"ai",model:q.provenance.reviewerModel,generatedAt:q.provenance.generatedAt}}));}
 export function finishAttempt(attempt: Attempt, now = new Date().toISOString()): Attempt {
   if (attempt.status === "completed") throw new Error("Esta tentativa já foi finalizada.");
   gradeAttempt(attempt);
