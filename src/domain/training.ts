@@ -1,5 +1,6 @@
 import { filterQuestions, type Filters } from "./catalog";
 import type { ContentAudit, Letter, Question } from "./types";
+import { areaOf, areas } from "./classification";
 export const letters: readonly Letter[] = ["A", "B", "C", "D", "E"];
 const shaPattern = /^[a-f0-9]{64}$/;
 export function canTrain(q: Question): boolean {
@@ -13,12 +14,17 @@ export function canTrain(q: Question): boolean {
 export type TrainingItem = {
   id: string; examId: string; number: number; discipline: string; topic: string;
   partition: string; reservedForEvaluation: boolean; audit: ContentAudit;
+  origin?: "official" | "third-party" | "ai";
+  resolution?: { text: string; source: "ai"; model: string; generatedAt: string };
 };
 export type Attempt = {
   id: string; title: string; createdAt: string; updatedAt: string; finishedAt: string | null;
   status: "paused" | "completed"; revision: number; items: TrainingItem[];
   answers: Record<string, Letter | null>; reviewFlags: Record<string, boolean>;
   timesMs: Record<string, number>; totalMs: number; currentIndex: number;
+  kind?: "full" | "thematic" | "review";
+  telemetry?: { version: 1; visits: Record<string, number>; answerChanges: Record<string, number> };
+  essay?: { criteria: { name: string; score: number; max: number; comment: string }[]; comment: string; source: string };
 };
 export function availableForTraining(questions: Question[], filters: Filters, includeReserved = false): Question[] {
   return filterQuestions(questions, filters).filter(q => canTrain(q) && (includeReserved || !q.reservedForEvaluation));
@@ -32,12 +38,25 @@ export function createAttempt(questions: Question[], quantity: number, title: st
   const items = eligible.slice(0, quantity).map(q => ({
     id: q.id, examId: q.examId, number: q.number, discipline: q.discipline, topic: q.topic,
     partition: q.partition || "não informado", reservedForEvaluation: !!q.reservedForEvaluation,
-    audit: structuredClone(q.audit!)
+    audit: structuredClone(q.audit!), origin: q.origin
   }));
   return { id, title, createdAt: now, updatedAt: now, finishedAt: null, status: "paused", revision: 0,
     items, answers: Object.fromEntries(items.map(q => [q.id, null])),
     reviewFlags: Object.fromEntries(items.map(q => [q.id, false])),
-    timesMs: Object.fromEntries(items.map(q => [q.id, 0])), totalMs: 0, currentIndex: 0 };
+    timesMs: Object.fromEntries(items.map(q => [q.id, 0])), totalMs: 0, currentIndex: 0,
+    kind: items.length === 60 && areas.every(area => items.filter(q => areaOf(q.discipline) === area).length === 15) ? "full" : "thematic",
+    telemetry: {version:1,visits:Object.fromEntries(items.map((q,i) => [q.id,i === 0 ? 1 : 0])),answerChanges:Object.fromEntries(items.map(q => [q.id,0]))} };
+}
+export function navigateAttempt(a: Attempt, index: number): Attempt {
+  if (!Number.isInteger(index) || index < 0 || index >= a.items.length) throw new Error("Questão indisponível.");
+  if (a.currentIndex === index) return a;
+  const id = a.items[index].id;
+  return {...a,currentIndex:index,...(a.telemetry ? {telemetry:{...a.telemetry,visits:{...a.telemetry.visits,[id]:a.telemetry.visits[id]+1}}} : {})};
+}
+export function answerAttempt(a: Attempt, id: string, answer: Letter | null): Attempt {
+  if (!a.items.some(q => q.id === id) || (answer !== null && !letters.includes(answer))) throw new Error("Resposta inválida.");
+  const changed = a.answers[id] !== null && a.answers[id] !== answer;
+  return {...a,answers:{...a.answers,[id]:answer},...(a.telemetry && changed ? {telemetry:{...a.telemetry,answerChanges:{...a.telemetry.answerChanges,[id]:a.telemetry.answerChanges[id]+1}}} : {})};
 }
 export function addElapsed(attempt: Attempt, deltaMs: number): Attempt {
   if (attempt.status === "completed" || !Number.isFinite(deltaMs) || deltaMs < 0) throw new Error("Tempo inválido para esta tentativa.");

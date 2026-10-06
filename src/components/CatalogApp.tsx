@@ -1,144 +1,68 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { emptyFilters, filterQuestions, uniqueOptions, type Filters } from "@/domain/catalog";
-import type { Catalog, Exam } from "@/domain/types";
-import { mergeBackup, readAttempts, readBookmarks, setBookmark } from "@/storage/indexed-db";
-import { validateBackup, type Bookmark } from "@/storage/backup";
-import QuestionCard from "./QuestionCard";
+import { useCallback,useEffect,useMemo,useRef,useState } from "react";
+import type { Catalog } from "@/domain/types";
+import { attemptFromPlan, type ProofPlan, type SavedPlan } from "@/domain/proof-plan";
+import { canTrain,createAttempt,type Attempt } from "@/domain/training";
+import type { ResultRow } from "@/domain/analytics";
+import { defaultPreferences,type Preferences,type ErrorNote,type ErrorReason } from "@/domain/preferences";
+import { deletePlan,mergeBackup,readAttempts,readBookmarks,readErrorNotes,readPlans,readPreferences,saveAttempt,saveErrorNote,savePlan,savePreferences,setBookmark } from "@/storage/indexed-db";
+import { validateBackup,type Bookmark } from "@/storage/backup";
+import ProofsPanel from "./ProofsPanel";
+import ReviewPanel from "./ReviewPanel";
+import AttemptRunner from "./AttemptRunner";
+import AttemptResult from "./AttemptResult";
 import SourcesPanel from "./SourcesPanel";
 import BackupControls from "./BackupControls";
-import TrainingPanel from "./TrainingPanel";
-import ReviewPanel from "./ReviewPanel";
-import type { Attempt } from "@/domain/training";
-type Tab = "questions" | "exams" | "sources" | "training" | "review";
-const PAGE_SIZE = 20;
-export default function CatalogApp() {
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [loadError, setLoadError] = useState("");
-  const [tab, setTab] = useState<Tab>("questions");
-  const [filters, setFilters] = useState<Filters>(emptyFilters);
-  const [page, setPage] = useState(1);
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-  const [storageReady, setStorageReady] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [trainingRunning, setTrainingRunning] = useState(false);
-  const [refreshSignal, setRefreshSignal] = useState(0);
-  const [protectedIds, setProtectedIds] = useState<string[]>([]);
-  const updateProtection = useCallback((attempts: Attempt[]) => {
-    const ids=[...new Set(attempts.filter(a=>a.status!=="completed").flatMap(a=>a.items.map(q=>q.id)))].sort();
-    setProtectedIds(prior=>prior.join("|")===ids.join("|")?prior:ids);
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/data/catalog.json", { signal: controller.signal }).then(async r => {
-      if (!r.ok) throw new Error("Falha ao carregar o catálogo.");
-      const data = await r.json();
-      if (data.schemaVersion !== 1 || !Array.isArray(data.questions)) throw new Error("Versão de dados incompatível.");
-      setCatalog(data);
-    }).catch(e => { if (e.name !== "AbortError") setLoadError(e.message); });
-    void Promise.all([readBookmarks(),readAttempts()]).then(([b,a]) => {
-      setBookmarks(b); updateProtection(a); setStorageReady(true);
-      if(a.some(attempt=>attempt.status==="paused"))setTab("training");
-    })
-      .catch(() => setMessage("Armazenamento local indisponível. A consulta funciona, mas marcações e backup estão desativados."));
-    return () => controller.abort();
-  }, []);
-  const savedIds = useMemo(() => bookmarks.map(b => b.questionId), [bookmarks]);
-  const filtered = useMemo(() => catalog ? filterQuestions(catalog.questions, filters, savedIds) : [], [catalog, filters, savedIds]);
-  const scoped = useMemo(() => catalog ? filterQuestions(catalog.questions,
-    { ...emptyFilters, origin: filters.origin, exam: filters.exam }) : [], [catalog, filters.origin, filters.exam]);
-  const disciplines = uniqueOptions(scoped.map(q => q.discipline));
-  const topics = uniqueOptions(scoped.filter(q => !filters.discipline || q.discipline === filters.discipline).map(q => q.topic));
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  function updateFilters(patch: Partial<Filters>) { setFilters(f => ({ ...f, ...patch })); setPage(1); }
-  async function toggleBookmark(id: string) {
-    setBusy(true);
-    try {
-      await setBookmark(id, !savedIds.includes(id)); setBookmarks(await readBookmarks());
-      setMessage(savedIds.includes(id) ? "Marcação removida." : "Questão marcada para revisão. Ainda não é um registro de resposta.");
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Não foi possível salvar."); }
-    finally { setBusy(false); }
+import CatalogBrowser from "./CatalogBrowser";
+import PersonalSettings from "./PersonalSettings";
+export default function CatalogApp(){
+  const [catalog,setCatalog]=useState<Catalog|null>(null),[loadError,setLoadError]=useState("");
+  const [tab,setTab]=useState<"proofs"|"review">("proofs"),[utility,setUtility]=useState<"sources"|"settings"|null>(null),[menu,setMenu]=useState(false);
+  const [attempts,setAttempts]=useState<Attempt[]>([]),[plans,setPlans]=useState<SavedPlan[]>([]),[notes,setNotes]=useState<ErrorNote[]>([]),[bookmarks,setBookmarks]=useState<Bookmark[]>([]),[preferences,setPreferences]=useState<Preferences>(defaultPreferences);
+  const [selected,setSelected]=useState<string|null>(null),[storageReady,setStorageReady]=useState(false),[running,setRunning]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
+  const booted=useRef(false);
+  const refreshAttempts=useCallback(()=>{void readAttempts().then(setAttempts).catch(e=>setMessage(e.message));},[]);
+  const refreshAll=useCallback(async()=>{const [a,b,n,p,s]=await Promise.all([readAttempts(),readBookmarks(),readErrorNotes(),readPlans(),readPreferences()]);setAttempts(a);setBookmarks(b);setNotes(n);setPlans(p);setPreferences(s);return a;},[]);
+  useEffect(()=>{
+    const controller=new AbortController();let active=true;
+    fetch("/data/catalog.json",{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error("Não foi possível carregar as questões.");const c=await r.json();if(c.schemaVersion!==1||!Array.isArray(c.questions))throw new Error("Catálogo incompatível.");if(active)setCatalog(c);}).catch(e=>{if(e.name!=="AbortError"&&active)setLoadError(e.message);});
+    void refreshAll().then(a=>{if(active){setStorageReady(true);if(!booted.current){const paused=[...a].filter(a=>a.status==="paused").sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];setSelected(paused?.id??null);booted.current=true;}}}).catch(e=>{if(active)setMessage(`Armazenamento local indisponível: ${e.message}`);});
+    return()=>{active=false;controller.abort();};
+  },[refreshAll]);
+  const protectedIds=useMemo(()=>new Set(attempts.filter(a=>a.status!=="completed").flatMap(a=>a.items.map(q=>q.id))),[attempts]);
+  const current=attempts.find(a=>a.id===selected);
+  function navigate(next:"proofs"|"review"){setTab(next);setUtility(null);setMenu(false);window.scrollTo({top:0,behavior:"auto"});}
+  function open(id:string){setSelected(id);setTab("proofs");setUtility(null);window.scrollTo({top:0,behavior:"auto"});}
+  function showUtility(value:"sources"|"settings"){setUtility(value);setMenu(false);window.scrollTo({top:0,behavior:"auto"});}
+  async function create(plan:ProofPlan){if(!catalog)return;const a=await saveAttempt(attemptFromPlan(plan,catalog.questions),null);setAttempts(prior=>[a,...prior]);open(a.id);}
+  async function saveConfiguration(plan:ProofPlan){const p:SavedPlan={id:crypto.randomUUID(),title:plan.prompt.trim()||(plan.mode==="full"?"Prova completa · 60 questões":plan.lines.map(l=>`${l.quantity} ${l.topic||l.discipline||l.area}`).join("; ")),createdAt:new Date().toISOString(),plan:structuredClone(plan)};p.title=p.title.slice(0,300);await savePlan(p);setPlans(await readPlans());}
+  async function removeConfiguration(id:string){await deletePlan(id);setPlans(await readPlans());}
+  async function settings(p:Preferences){await savePreferences(p);setPreferences(p);setMessage("Metas e pesos salvos neste navegador.");}
+  async function reason(row:ResultRow,value:ErrorReason|null){const note:ErrorNote={id:row.key,attemptId:row.attemptId,questionId:row.item.id,reason:value,updatedAt:new Date().toISOString()};await saveErrorNote(note);setNotes(await readErrorNotes());}
+  async function review(rows:ResultRow[]){
+    if(!catalog||!rows.length)throw new Error("Selecione erros para criar a revisão.");
+    const unique=[...new Map(rows.filter(r=>r.outcome==="wrong").map(r=>[r.item.id,r])).values()];
+    const questions=unique.map(r=>{const q=catalog.questions.find(q=>q.id===r.item.id);if(!q||!canTrain(q)||q.audit!.revision!==r.item.audit.revision)throw new Error("O conteúdo conferido de uma questão não está disponível nesta versão. Preserve as fontes da tentativa.");return q;});
+    const a=await saveAttempt({...createAttempt(questions,questions.length,`Revisão · ${questions.length} erros selecionados`,true),kind:"review"},null);setAttempts(prior=>[a,...prior]);open(a.id);
   }
-  async function importBackup(file: File) {
-    if (!catalog) return;
-    setBusy(true);
-    try {
-      if (file.size > 50_000_000) throw new Error("Backup maior que o limite de 50 MB desta versão.");
-      const backup = validateBackup(JSON.parse(await file.text()), new Set(catalog.questions.map(q => q.id)), catalog.questions);
-      const imported=await mergeBackup(backup); setBookmarks(await readBookmarks());
-      updateProtection(await readAttempts()); setRefreshSignal(v=>v+1);
-      setMessage(`Backup importado. Suas marcações anteriores foram preservadas. ${imported.addedAttempts} tentativas adicionadas; ${imported.keptAttempts} tentativas já existentes foram mantidas sem sobrescrita.`);
-    } catch (e) { setMessage(e instanceof SyntaxError ? "O arquivo não é um JSON válido. Nada foi importado." : e instanceof Error ? e.message : "Arquivo inválido. Nada foi importado."); }
-    finally { setBusy(false); }
-  }
-  function consultExam(exam: Exam) {
-    setFilters({ ...emptyFilters, origin: exam.origin, exam: exam.id }); setPage(1); setTab("questions");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-  return <div className="app-shell">
-    <aside className="sidebar">
-      <a className="brand" href="/" aria-label="Meu preparo, início"><span className="brand-mark">i.</span><span>meu preparo<small>INSPER · 2027.1</small></span></a>
-      <div className="sidebar-caption">SEU ESPAÇO DE ESTUDO</div>
-      <nav aria-label="Navegação principal">{([
-        ["questions", "01", "Questões"], ["exams", "02", "Provas"], ["sources", "03", "Fontes e relatório"], ["training", "04", "Treino"], ["review", "05", "Caderno de revisão"]
-      ] as const).map(([key, n, label]) => <button key={key} className={tab === key ? "active" : ""}
-        aria-label={label} aria-current={tab === key ? "page" : undefined} onClick={() => setTab(key)}><span aria-hidden="true">{n}</span>{label}</button>)}</nav>
-      <div className="sidebar-foot"><span className="local-dot" /> Aplicativo pessoal<br /><small>Dados locais. Sem banco remoto.<br />Etapa 2 · treino e fontes</small></div>
-    </aside>
-    <main id="main">
-      <header className="topbar"><span>PREPARAÇÃO COM FONTES</span><span className="tag">Segunda etapa</span></header>
-      <div className="content">
-        <div className="intro"><span className="eyebrow">Insper 2027.1</span><h1>Seu ponto de partida.</h1><p>Conheça as provas, encontre assuntos e organize o que quer revisar.</p></div>
-        {loadError ? <div role="alert" className="notice"><p>{loadError}</p><button onClick={() => window.location.reload()}>Tentar novamente</button></div>
-          : !catalog ? <p role="status">Carregando os dados validados…</p> : <>
-          <div className="stats-grid">
-            <Stat value={catalog.stats.questions} label="questões no catálogo" />
-            <Stat value={catalog.stats.official} label="itens de seleção¹" />
-            <Stat value={catalog.stats.thirdParty} label="itens de terceiros" />
-            <Stat value={catalog.stats.ready} label="prontas para treino" />
-          </div>
-          <div className="notice availability"><div className="notice-symbol">i</div><div><strong>O acervo está disponível para consulta.</strong><p>{catalog.stats.ready ? `${catalog.stats.ready} questões têm conteúdo e gabarito conferidos. Os demais registros permanecem identificados com seus bloqueios.` : "Os cadernos e gabaritos originais ainda não foram fornecidos e conferidos. As 400 questões reais continuam bloqueadas para correção automática; o treino só aceita conteúdo validado."}</p></div></div>
-          <BackupControls bookmarks={bookmarks} disabled={!storageReady || busy || trainingRunning} onImport={importBackup} onMessage={setMessage} />
-          {trainingRunning && <p className="muted">Pause o treino para exportar ou importar um backup consistente.</p>}
-          {message && <p role="status" className="feedback">{message}</p>}
-          {tab === "questions" && <section aria-label="Catálogo de questões">
-            <div className="section-heading"><div><span className="eyebrow">Explore o acervo</span><h2>Questões por assunto</h2></div><span className="muted">{filtered.length} resultados</span></div>
-            <div className="filters">
-              <label className="search-field">Buscar no texto ou assunto<input placeholder="Ex.: sistemas, genética, interpretação…" value={filters.search} onChange={e => updateFilters({ search: e.target.value })} type="search" /></label>
-              <label>Origem<select value={filters.origin} onChange={e => updateFilters({ origin: e.target.value, exam: "", discipline: "", topic: "" })}><option value="">Todas as origens</option><option value="official">Seleção · Insper/Vunesp¹</option><option value="third-party">Simulados de terceiros · ALFRED</option></select></label>
-              <label>Prova<select value={filters.exam} onChange={e => updateFilters({ exam: e.target.value, discipline: "", topic: "" })}><option value="">Todas as provas</option>{catalog.exams.filter(e => !filters.origin || e.origin === filters.origin).map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</select></label>
-              <label>Disciplina<select value={filters.discipline} onChange={e => updateFilters({ discipline: e.target.value, topic: "" })}><option value="">Todas as disciplinas</option>{disciplines.map(d => <option key={d}>{d}</option>)}</select></label>
-              <label>Assunto<select value={filters.topic} onChange={e => updateFilters({ topic: e.target.value })}><option value="">Todos os assuntos</option>{topics.map(t => <option key={t}>{t}</option>)}</select></label>
-              <div className="filter-actions"><label className="checkbox"><input type="checkbox" checked={filters.savedOnly} onChange={e => updateFilters({ savedOnly: e.target.checked })} />Só marcadas para revisar</label><button onClick={() => { setFilters(emptyFilters); setPage(1); }}>Limpar filtros</button></div>
-            </div>
-            <p className="result-count" role="status">{filtered.length ? `Mostrando ${(currentPage - 1)*PAGE_SIZE + 1}–${Math.min(currentPage*PAGE_SIZE, filtered.length)} de ${filtered.length} questões` : "Nenhuma questão encontrada. Tente outro assunto ou limpe os filtros."}</p>
-            <div className="questions-grid">{filtered.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE).map(q => <QuestionCard key={q.id} question={q} catalog={catalog} saved={savedIds.includes(q.id)} hideAnswer={protectedIds.includes(q.id)} disabled={!storageReady || busy} onSave={() => void toggleBookmark(q.id)} />)}</div>
-            <div className="pagination"><button disabled={currentPage === 1} onClick={() => setPage(currentPage-1)}>← Anterior</button><span>Página {currentPage} de {totalPages}</span><button disabled={currentPage === totalPages} onClick={() => setPage(currentPage+1)}>Próxima →</button></div>
-          </section>}
-          {tab === "exams" && <section aria-label="Catálogo de provas">
-            <div className="section-heading"><div><span className="eyebrow">Sete conjuntos canônicos</span><h2>Conheça as provas</h2></div></div>
-            {(["official", "third-party"] as const).map(origin => <div key={origin}><h3 className="section-title">{origin === "official" ? "Seleção · Insper/Vunesp¹" : "Simulados de terceiros · ALFRED"}</h3>
-              <div className="exams-grid">{catalog.exams.filter(e => e.origin === origin).map(e => <article className="exam-card" key={e.id}>
-                <span className="eyebrow">{e.id}</span><h3>{e.title}</h3><p>{e.count} questões · {e.answers} respostas registradas</p>
-                <p className="muted">{e.date ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(e.date+"T12:00:00Z")) : "Data não comprovada"} · {e.dateStatus}</p>
-                <span className={`tag ${e.readyCount ? "green" : "amber"}`}>{e.readyCount ? `${e.readyCount} questões liberadas` : "Sem correção automática"}</span>
-                {catalog.questions.some(q=>q.examId===e.id&&q.reservedForEvaluation)&&<p className="notice small">Reservada para avaliação. Sua inclusão no treino exige marcar a opção correspondente.</p>}
-                {catalog.documents.find(d=>d.arquivo===e.document)?.url&&<p><a href={catalog.documents.find(d=>d.arquivo===e.document)!.url!} target="_blank" rel="noreferrer">Abrir caderno original ↗</a></p>}
-                <p className="muted">{e.authenticity}</p>
-                <button className="primary" onClick={() => consultExam(e)}>Consultar questões →</button>
-              </article>)}</div></div>)}
-          </section>}
-          {tab === "sources" && <SourcesPanel catalog={catalog} />}
-          {tab === "training" && <TrainingPanel catalog={catalog} storageReady={storageReady} refreshSignal={refreshSignal} onRunningChange={setTrainingRunning} onAttemptsChange={updateProtection} />}
-          {tab === "review" && <ReviewPanel refreshSignal={refreshSignal} />}
-          <footer><p>¹ Seleção conforme a classificação documental do banco. Autenticidade externa não verificada.</p><p>Marcações ficam no IndexedDB deste navegador e deste endereço. Exporte um backup antes de limpar os dados do navegador. Tentativas e tempos também ficam neste navegador. Redação e geração por IA ficam para as próximas etapas.</p></footer>
-        </>}
-      </div>
-    </main>
-  </div>;
-}
-function Stat({ value, label }: { value: number; label: string }) {
-  return <div className="stat"><strong>{value}</strong><span>{label}</span></div>;
+  async function importBackup(file:File){if(!catalog)return;setBusy(true);try{
+    if(file.size>50_000_000)throw new Error("Backup maior que 50 MB.");
+    const backup=validateBackup(JSON.parse(await file.text()),new Set(catalog.questions.map(q=>q.id)),catalog.questions),summary=await mergeBackup(backup);await refreshAll();setMessage(`Backup importado: ${summary.addedAttempts} tentativas adicionadas; ${summary.keptAttempts} existentes preservadas. Metas, motivos de erro e configurações existentes também foram mantidos.`);
+  }catch(e){setMessage(e instanceof Error?e.message:"Backup inválido. Nada foi importado.");}finally{setBusy(false);}}
+  async function bookmark(id:string){setBusy(true);try{await setBookmark(id,!bookmarks.some(b=>b.questionId===id));setBookmarks(await readBookmarks());}catch(e){setMessage(e instanceof Error?e.message:"Falha ao salvar.");}finally{setBusy(false);}}
+  const shared=catalog?{catalog,attempts,preferences,notes,onPreferences:settings,onReason:reason,onReview:review}:null;
+  return <div className="app-shell"><header className="app-header"><a className="brand" href="/" aria-label="Meu preparo, início"><span className="brand-mark">i.</span><span>meu preparo<small>INSPER 2027.1</small></span></a>
+    <nav aria-label="Navegação principal"><button className={tab==="proofs"&&!utility?"active":""} aria-current={tab==="proofs"&&!utility?"page":undefined} disabled={running&&tab!=="proofs"} onClick={()=>navigate("proofs")}>Provas</button><button className={tab==="review"&&!utility?"active":""} aria-current={tab==="review"&&!utility?"page":undefined} disabled={running} onClick={()=>navigate("review")}>Revisão</button></nav>
+    <div className="utility-menu"><button aria-label="Menu de fontes e configurações" aria-expanded={menu} disabled={running} onClick={()=>setMenu(v=>!v)}>Mais <span aria-hidden="true">⌄</span></button>{menu&&<div className="menu-popover"><button onClick={()=>showUtility("sources")}>Fontes e acervo</button><button onClick={()=>showUtility("settings")}>Dados e configurações</button></div>}</div>
+  </header><main id="main" className="content">
+    {loadError?<div role="alert" className="notice"><p>{loadError}</p><button onClick={()=>window.location.reload()}>Tentar novamente</button></div>:!catalog?<div className="loading-state" role="status"><span className="loading-spinner"/>Preparando seu espaço de estudo…</div>:<>
+      {message&&<div role="status" className="feedback app-feedback"><p>{message}</p><button aria-label="Fechar mensagem" onClick={()=>setMessage("")}>×</button></div>}
+      {utility&&<button className="back-button" onClick={()=>setUtility(null)}>← Voltar a {tab==="proofs"?"Provas":"Revisão"}</button>}
+      {utility==="sources"&&<><SourcesPanel catalog={catalog}/><CatalogBrowser catalog={catalog} savedIds={bookmarks.map(b=>b.questionId)} protectedIds={protectedIds} disabled={!storageReady||busy} onSave={bookmark}/></>}
+      {utility==="settings"&&<section><div className="page-heading"><div><span className="eyebrow">Seu aplicativo</span><h1>Dados e configurações</h1><p>Seu histórico fica neste navegador. Guarde uma cópia antes de atualizar.</p></div></div><div className="panel"><h2>Backup do histórico</h2><BackupControls bookmarks={bookmarks} disabled={!storageReady||busy||running} onImport={importBackup} onMessage={setMessage}/><p className="muted">Inclui respostas, tempos, visitas registradas, motivos dos erros, metas, pesos e configurações salvas. Os PDFs permanecem na pasta do aplicativo. Backups das versões anteriores continuam aceitos.</p></div><div className="panel settings-panel"><h2>Metas e pesos</h2><PersonalSettings key={JSON.stringify(preferences)} preferences={preferences} onSave={settings}/></div><div className="panel settings-panel"><h2>Integração com IA</h2><p>A geração inédita é o objetivo principal. A conexão local com seu ChatGPT Plus ainda precisa ser implementada e validada. Não há cobrança de API nem conexão automática com sua conta.</p></div></section>}
+      {!utility&&tab==="proofs"&&(current?current.status==="completed"?<><button className="back-button" onClick={()=>setSelected(null)}>← Voltar a Provas</button><AttemptResult {...shared!} attempt={current}/></>:<AttemptRunner key={current.id} initial={current} onSaved={refreshAttempts} onRunningChange={setRunning} onExit={()=>{setSelected(null);refreshAttempts();}}/>:<ProofsPanel catalog={catalog} attempts={attempts} plans={plans} storageReady={storageReady} onCreate={create} onOpen={open} onSavePlan={saveConfiguration} onDeletePlan={removeConfiguration}/>)}
+      {!utility&&tab==="review"&&<ReviewPanel {...shared!}/>}
+    </>}
+    <footer className="app-footer"><span>Meu preparo · Insper 2027.1</span><span>Seu ritmo. Seu histórico.</span></footer>
+  </main></div>;
 }

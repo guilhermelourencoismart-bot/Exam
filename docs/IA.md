@@ -1,6 +1,8 @@
 # IA e assinatura ChatGPT Plus
 
-Nesta etapa não há integração de IA, login, chave de API, chamada de geração nem alternativa paga. `src/ai/status.ts` é apenas o estado desativado.
+Na versão 0.3.0 a geração inédita é a opção principal em Provas, com composição completa/personalizada, pedidos simples interpretados por código e configurações persistidas. Ainda não há integração real de IA, login, chave de API, chamada de geração nem alternativa paga. Salvar um pedido não cria uma questão nem uma tentativa. O botão de geração permanece desativado. `src/ai/status.ts` conserva o estado desativado.
+
+A documentação oficial do README do Codex e do app-server foi novamente consultada em 05/10/2026 durante esta atualização. O README mantém Sign in with ChatGPT para os planos, incluindo Plus. Isso não equivale a validar uma integração autenticada do aplicativo. A geração, revisão de questões autorais e resoluções continuam pendentes da ponte local e de uma chamada real verificada.
 
 Consulta realizada em 05/10/2026 aos arquivos oficiais do projeto open-source **OpenAI Codex**:
 

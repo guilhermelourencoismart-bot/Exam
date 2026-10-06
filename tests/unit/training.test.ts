@@ -60,6 +60,6 @@ describe("treino e versão",()=>{
   });
   it("aceita backup da primeira etapa, sem tentar inventar tentativas",()=>{
     const parsed=validateBackup({app:"insper-pessoal",schemaVersion:1,exportedAt:new Date().toISOString(),bookmarks:[]},new Set());
-    expect(parsed.schemaVersion).toBe(2);expect(parsed.attempts).toEqual([]);
+    expect(parsed.schemaVersion).toBe(3);expect(parsed.attempts).toEqual([]);
   });
 });
